@@ -1,0 +1,17 @@
+FROM deepseek-r1-local:latest
+
+TEMPLATE """
+{{- if .System }}System:
+{{ .System }}
+
+{{ end -}}
+{{- range .Messages -}}
+{{- if eq .Role "user" -}}User:
+{{ else if eq .Role "assistant" -}}Assistant:
+{{ else -}}{{ .Role }}:
+{{ end -}}
+{{ .Content }}
+
+{{- end -}}
+Assistant:
+"""
