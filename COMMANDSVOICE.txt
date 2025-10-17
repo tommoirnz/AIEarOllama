@@ -1,0 +1,180 @@
+Voice Commands 🎤
+To Activate Visual/Vision Mode:
+
+WHAT DO YOU SEE (does everything, activates camera and takes a photo and asks that question)
+
+
+"what can you see"
+
+"whats happening"
+
+"what is happening"
+
+"whats going on"
+
+"what is going on"
+
+"describe what you see"
+
+"tell me what you see"
+
+"show me what you see"
+
+"what are you seeing"
+
+"whats in front of you"
+
+"describe the scene"
+
+"whats around you"
+
+"whats in the room"
+
+also to just speak to vision ai
+
+
+"vision mode"
+
+"image mode"
+
+"speak with the image AI"
+
+"speak to the image AI"
+
+"talk to the image AI"
+
+"speak with the vision AI"
+
+"speak to the vision AI"
+
+"talk to the vision AI"
+
+"use the image AI"
+
+"use the vision AI"
+
+"switch to vision"
+
+"switch to image"
+
+"speak with the Guardian"
+
+------------------------------------
+
+To Return to Text Mode:
+"new topic"
+
+"switch to text"
+
+"text mode"
+
+"forget image"
+
+"clear image"
+
+"ignore the image"
+
+"can I speak to Zen"
+
+"stop using the image"
+
+"no vision"
+
+"text only"
+
+"go back to text"
+
+"can I speak to zen"
+
+"back to text"
+
+"speak with zen"
+
+"speak to zen"
+
+---------------------------------------
+
+Transfer Vision Information to Text AI:
+"send"
+
+"send to text"
+
+"send to zen"
+
+"send information"
+
+"send that"
+
+"ok send that"
+
+"pass to text"
+
+"pass to zen"
+
+"transfer to text"
+
+"send to test"
+
+"give to zen"
+
+"forward to text"
+
+"share with zen"
+
+"send that to text"
+
+"send it to text"
+
+"pass it to test"
+
+"send this to text"
+
+"pass this to text"
+
+"ok push"
+
+-----------------------------------
+UI Button Commands 🖱️
+Visual Mode Controls:
+"Images…" button - Opens image/camera window
+
+"Ask model" button in image window - Sends image to vision AI
+
+"Start Camera" button - Opens camera feed
+
+"Snapshot" button - Takes picture for vision analysis
+
+Transfer Controls:
+"Pass to Text AI" button - Moves vision reply to text input
+
+"Refresh Last Reply" button - Debug vision state
+
+Text Input Commands ⌨️
+You can also type these commands in the text input box:
+
+Same phrases as voice commands work in text
+
+Use Ctrl+Enter to send text commands quickly
+
+-------------------------------------
+
+Quick Reference Card:
+ENTER VISUAL MODE:
+
+text
+"vision mode", "image mode", "speak with vision AI"
+EXIT TO TEXT MODE:
+
+text
+"text mode", "switch to text", "new topic"
+TRANSFER DATA:
+
+text
+"send to text", "pass to zen", "send that"
+STOP SPEECH:
+
+text
+"stop", "stop speaking", "be quiet"
+Copy these commands to a text file for easy reference while using the program!
+
+
