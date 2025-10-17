@@ -16,6 +16,7 @@ import tkinter.font as tkfont
 from tkinter.scrolledtext import ScrolledText
 
 # This is probably the best version to date with a choice of 3 avatars
+# No Vision in this program though, only text based AI
 
 try:
     import torch
