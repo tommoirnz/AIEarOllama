@@ -40,7 +40,7 @@ class ASR:
             audio=audio,
             beam_size=self.beam_size,
             temperature=0.0,
-            language="en",
+            #language="en",
             condition_on_previous_text=False,
             suppress_blank=True,
             no_speech_threshold=0.6,
@@ -54,3 +54,4 @@ class ASR:
 
         segments, info = self.model.transcribe(**kw)
         return "".join(seg.text for seg in segments).strip()
+
