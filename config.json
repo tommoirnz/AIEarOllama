@@ -23,7 +23,7 @@
   "whisper_device": "cuda",
   "whisper_compute_type": "float16",
   "whisper_model": "base.en",
-  "whisper_beam_size": 1,
+  "whisper_beam_size": 5,
 
 "qwen_model_path.old": "qwen2.5:7b-instruct",
 
@@ -50,4 +50,5 @@
     "latex_text_pt": 12,
   "latex_math_pt": 8,
   "latex_text_family": "Segoe UI"
+
 }
