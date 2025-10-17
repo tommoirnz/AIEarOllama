@@ -12,7 +12,6 @@ import matplotlib
 # This uses two models and a different Json file and handles images as well
 #Look for the Json file  called Json2. You will need two models as per the Json file loaded into ollama
 #can read equations off paper and handwriting
-
 matplotlib.rcParams["figure.max_open_warning"] = 0
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -903,7 +902,9 @@ class App:
         # Vision system prompt
         self.vl_system_prompt = self.cfg.get(
             "vl_system_prompt",
-            "You are a multimodal assistant. You CAN see the provided image(s). "
+            "You are the vision AI assistant. You CAN see the provided image(s). "
+            "When describing what you see, begin with 'I am the vision AI, I can see the following: ' "
+            "and then provide a clear, detailed description. "
             "Answer using only what is visible in the image plus the user question. "
             "If asked to count, return a number. If asked to identify, name the most likely class. "
             "Do not say you are text-based."
@@ -1231,6 +1232,14 @@ class App:
             self._bargein_enabled = bool(self.cfg.get("bargein_enable", True))
             self._bargein_enabled = self.duplex_mode.get().startswith("Full")
 
+            # === ADD VISION STATE INITIALIZATION HERE ===
+            self._vision_turns_left = int(self.cfg.get("vision_followup_max_turns", 5))
+            self._vision_context_until = 0.0
+            self._last_was_vision = False
+            self.logln(f"[vision] initialized: max_turns={self._vision_turns_left}")
+
+        except Exception as e:
+            self.logln(f"[cfg] apply defaults error: {e}")
         except Exception as e:
             self.logln(f"[cfg] apply defaults error: {e}")
 
@@ -1272,18 +1281,67 @@ class App:
             return
 
         if new_image:
-            # New image = fresh context
-            self._vision_turns_left = int(self.cfg.get("vision_followup_max_turns", 2))
-            self._vision_context_until = _t.monotonic() + float(self.cfg.get("vision_followup_s", 180))
+            # New image = fresh context with full turns
+            max_turns = int(self.cfg.get("vision_followup_max_turns", 3))
+            self._vision_turns_left = max_turns
+            self._vision_context_until = _t.monotonic() + 300  # 5 minutes
             self._last_was_vision = True
-            self.logln(f"[vision] new image context: turns={self._vision_turns_left}")
+            self.logln(f"[vision] new image context: turns={self._vision_turns_left}, window=300s")
             return
 
         if used_turn and self._vision_turns_left > 0:
             self._vision_turns_left -= 1
-            # Extend context window when using a turn
-            self._vision_context_until = _t.monotonic() + float(self.cfg.get("vision_followup_s", 180))
+            # Always extend context window when using a turn
+            self._vision_context_until = _t.monotonic() + 300
             self.logln(f"[vision] used one turn: {self._vision_turns_left} remaining")
+
+    def _should_use_vision_followup(self, text: str) -> bool:
+        """Decide if a text turn should reuse the last image."""
+        import time as _t
+
+        t = (text or "").strip().lower()
+        if not t:
+            return False
+
+        now = _t.monotonic()
+        has_img = bool(self._last_image_path and os.path.exists(self._last_image_path))
+
+        # Check if we have an active vision context
+        has_context = has_img and (now <= float(self._vision_context_until or 0))
+        has_turns = has_img and (int(self._vision_turns_left or 0) > 0)
+
+        # Detailed logging
+        self.logln(
+            f"[vision-route] has_img={has_img}, has_context={has_context}, has_turns={has_turns}, turns_left={self._vision_turns_left}")
+        self.logln(
+            f"[vision-route] context_until={self._vision_context_until}, now={now}, remaining={self._vision_context_until - now if self._vision_context_until else 0}")
+
+        # If we have an image but context expired, give one more turn
+        if has_img and not has_context and self._last_was_vision:
+            self.logln("[vision-route] context expired but giving grace turn")
+            return True
+
+        if not (has_context and has_turns):
+            self.logln(f"[vision-route] context expired: has_context={has_context}, has_turns={has_turns}")
+            return False
+
+        # If we have context and turns, be more permissive about what goes to vision
+        if self._last_was_vision and len(t) < 100:  # Short follow-ups after vision
+            self.logln("[vision-route] short follow-up after vision -> use vision")
+            return True
+
+        # Explicit vision cues
+        vision_cues = [
+            "image", "picture", "photo", "this", "that", "it", "they",
+            "what color", "how many", "count", "describe", "explain",
+            "on the left", "on the right", "in the middle", "in the background",
+            "do you see", "can you see", "find", "locate", "identify"
+        ]
+
+        cue_hit = any(cue in t for cue in vision_cues)
+        self.logln(f"[vision-route] vision cues matched: {cue_hit}")
+
+        return cue_hit
 
     # === FIXED: _on_new_image ===
     def _on_new_image(self, path: str):
@@ -1325,25 +1383,29 @@ class App:
         if self._route_command(text):
             return
 
-        # --- Route the user question to appropriate model ---
+        # In handle_text_query and loop methods, replace the vision routing section with:
+
+        # Route the user question to appropriate model
         try:
             use_vision = self._should_use_vision_followup(text)
 
             if use_vision:
-                self.logln("[vision] follow-up → reuse last image")
-                reply = self._ollama_generate(text, images=[self._last_image_path])
-                # FIXED: Only decrement AFTER successful generation
+                self.logln(f"[vision] follow-up → reuse last image (turns left: {self._vision_turns_left})")
+                reply = self._ollama_generate_with_retry(text, images=[self._last_image_path])
+                # Only decrement AFTER successful generation
                 self._update_vision_state(used_turn=True)
+                self._last_was_vision = True  # Ensure this stays True
             else:
                 # normal text model path
                 reply = self.qwen.generate(text)
-                self._update_vision_state(reset=True)  # Clear vision context when using text
+                # Only reset if we're definitely not in a vision context
+                if not self._should_use_vision_followup("dummy"):  # Check if context expired
+                    self._update_vision_state(reset=True)
 
         except Exception as e:
             self.logln(f"[llm/vision] {e}\n[hint] Is Ollama running?  ollama serve")
             self.set_light("idle")
             return
-
         self.logln(f"[qwen] {reply}")
         self.preview_latex(reply)
         self._set_last_vision_reply(reply)
@@ -1389,7 +1451,7 @@ class App:
             try:
                 self.logln(f"[vision] {os.path.basename(image_path)} | prompt: {prompt}")
                 self.preview_latex(prompt)
-                reply = self._ollama_generate(prompt, images=[image_path])
+                reply = self._ollama_generate_with_retry(prompt, images=[image_path])
 
                 # FIXED: Use unified state management
                 self._update_vision_state(used_turn=True)
@@ -1512,7 +1574,20 @@ class App:
 
         except Exception as e:
             self.logln(f"[refresh] Error: {e}")
-    # [CONTINUED IN NEXT MESSAGE DUE TO LENGTH LIMIT...]
+
+    def debug_vision_state(self):
+        """Debug method to show current vision state"""
+        import time as _t
+        now = _t.monotonic()
+        context_valid = now <= float(self._vision_context_until or 0)
+
+        self.logln(f"[vision-debug]")
+        self.logln(f"  last_image: {os.path.basename(self._last_image_path) if self._last_image_path else 'None'}")
+        self.logln(f"  turns_left: {self._vision_turns_left}")
+        self.logln(f"  context_until: {self._vision_context_until} (valid: {context_valid})")
+        self.logln(f"  last_was_vision: {self._last_was_vision}")
+        self.logln(f"  current_time: {now}")
+
     # === Core Application Methods ===
     def start(self):
         if self.running: return
@@ -1544,6 +1619,47 @@ class App:
         self.qwen.clear_history()
         self.qwen.system_prompt = self.cfg.get("system_prompt", "")
         self.logln("[info] Chat reset.")
+
+    def what_do_you_see_ui(self):
+        """Voice command: 'what do you see' -> open camera, take picture, and describe automatically."""
+        try:
+            # Ensure image window exists and is visible
+            self._ensure_image_window()
+            if self._img_win is None:
+                self.logln("[vision] camera UI unavailable")
+                return
+
+            # Show and raise the window
+            self._img_win.deiconify()
+            self._img_win.lift()
+
+            # Start camera if not already running
+            if not getattr(self._img_win, '_live_mode', False):
+                self._img_win.start_camera()
+                self.logln("[vision] camera started for 'what do you see'")
+                # Wait a moment for camera to initialize
+                time.sleep(1.5)
+
+            # Take snapshot
+            saved_path = self._img_win.snapshot()
+            if saved_path:
+                self.logln(f"[vision] snapshot taken: {saved_path}")
+
+                # Use the special vision prompt that includes the "I am the vision AI" prefix
+                vision_prompt = (
+                    "You are the vision AI. Begin your response with 'I am the vision AI, I can see the following: ' "
+                    "and then describe what you see in the image in clear, detailed terms. "
+                    "Focus on the main subjects, actions, and any notable details."
+                )
+
+                # Call the vision system with the special prompt
+                self.ask_vision(saved_path, vision_prompt)
+            else:
+                self.logln("[vision] failed to take snapshot for 'what do you see'")
+
+        except Exception as e:
+            self.logln(f"[vision] 'what do you see' error: {e}")
+
 
     def loop(self):
         dev_choice = self.dev_combo.get()
@@ -1645,33 +1761,29 @@ class App:
 
             # Handle vision/text routing
             try:
-                t = (text or "").lower()
-                force_visual = any(k in t for k in (
-                    "color", "colour", "how many", "count",
-                    "in the image", "in the picture", "in the photo",
-                    "what is in", "what’s in", "whats in",
-                    "on the left", "on the right", "in the middle"
-                ))
-
-                use_vision = (
-                        bool(self._last_image_path) and
-                        (self._should_use_vision_followup(text) or force_visual)
-                )
-
+                use_vision = self._should_use_vision_followup(text)
 
                 if use_vision:
-                    self.logln("[vision][voice] follow-up → reuse last image")
-                    reply = self._ollama_generate(text, images=[self._last_image_path])
+                    self.logln(f"[vision][voice] follow-up → reuse last image (turns left: {self._vision_turns_left})")
+                    reply = self._ollama_generate_with_retry(text, images=[self._last_image_path])
 
                     # IMPORTANT: Set the vision reply immediately after generation
                     self._set_last_vision_reply(reply)
 
+                    # Update state AFTER successful generation
                     self._update_vision_state(used_turn=True)
+                    self._last_was_vision = True  # Ensure this is set
                 else:
                     self.logln("[vision][voice] not using vision (text-only)")
                     reply = self.qwen.generate(text)
-                    self._update_vision_state(reset=True)
+                    # Only reset if we're definitely not in a vision context
+                    if not self._should_use_vision_followup("dummy"):  # Check if context expired
+                        self._update_vision_state(reset=True)
 
+            except Exception as e:
+                self.logln(f"[llm/vision] {e}\n[hint] Is Ollama running?  ollama serve")
+                self.set_light("idle")
+                continue
             except Exception as e:
                 self.logln(f"[llm/vision] {e}\n[hint] Is Ollama running?  ollama serve")
                 self.set_light("idle")
@@ -1739,8 +1851,25 @@ class App:
                 rms = _np.sqrt(_np.mean(audio ** 2)) * 32768
                 self._last_rms = float(rms)
 
-                if self._bargein_enabled:
-                    if rms > threshold_interrupt:
+                # === ENHANCED BARGE-IN PROTECTION ===
+                # Don't allow barge-in during the first 1.5 seconds of speech
+                speech_start_time = getattr(self, '_speech_start_time', 0)
+                is_early_speech = _time.monotonic() - speech_start_time < 1.5
+
+                # Don't allow barge-in during vision follow-ups
+                is_vision_followup = (
+                        self._last_was_vision and
+                        self._vision_turns_left > 0 and
+                        getattr(self, '_vision_context_until', 0) > _time.monotonic()
+                )
+
+                # Lower threshold for stop commands (more sensitive)
+                effective_threshold = threshold_interrupt
+                if rms > 800:  # Lower threshold for loud "STOP" type commands
+                    effective_threshold = max(800, threshold_interrupt - 500)
+
+                if self._bargein_enabled and not is_early_speech and not is_vision_followup:
+                    if rms > effective_threshold:
                         trips += 1
                         if trips >= trips_needed:
                             self.logln(f"[barge-in] RMS={rms:.0f} interrupt -> latch listen-only")
@@ -1756,7 +1885,9 @@ class App:
                             trips = 0
                     else:
                         trips = max(trips - 1, 0)
+                # === END ENHANCED PROTECTION ===
 
+                # ... rest of ducking code .....
                 if self.ducking_enable.get():
                     target = 1.0
                     if rms > float(self.duck_thresh.get()):
@@ -1854,7 +1985,8 @@ class App:
         import platform as _plat
         start_time = time.monotonic()
         active_token = token
-
+        # Track speech start time for barge-in protection
+        self._speech_start_time = start_time
         try:
             data, fs = sf.read(path, dtype="float32")
             if data.ndim == 1:
@@ -2061,43 +2193,6 @@ class App:
             dur = time.monotonic() - start_time
             self.logln(f"[audio] playback done ({dur:.2f}s)")
 
-    # === Vision System Methods ===
-    def _should_use_vision_followup(self, text: str) -> bool:
-        """Decide if a text turn should reuse the last image."""
-        import time as _t
-
-        t = (text or "").lower()
-        now = _t.monotonic()
-        has_img = bool(self._last_image_path)
-        window_ok = has_img and (now <= float(self._vision_context_until or 0))
-        turns_ok = has_img and (int(self._vision_turns_left or 0) > 0)
-
-        # Hard cues that strongly suggest you really mean the image
-        cues = [
-            "image", "picture", "photo", "in the image", "in the picture", "in the photo",
-            "what color", "what colour", "how many", "count", "what type", "what kind",
-            "on the left", "on the right", "in the middle", "do you see", "can you see",
-            "people", "person", "faces",
-        ]
-        cue_hit = any(c in t for c in cues)
-
-        # Light heuristic: short/pronounny follow-ups after a vision turn
-        shortish = len(t) <= 60
-        pronouny = any(
-            p in f" {t} " for p in (" what ", " which ", " that ", " this ", " it ", " they ", " them ", " those "))
-        light_hint = (shortish or pronouny) and bool(self._last_was_vision)
-
-        # If user explicitly says to stop using the image, don't route to vision
-        new_topic_cues = ["new topic", "switch to text", "ignore the image", "clear image", "text mode"]
-        hard_text = any(k in t for k in new_topic_cues)
-
-        decision = bool(window_ok and turns_ok and (cue_hit or light_hint) and not hard_text)
-        self.logln(
-            f"[vision-route] followup? has_img={has_img} window_ok={window_ok} turns={self._vision_turns_left} "
-            f"cues={cue_hit} light={light_hint} hard_text={hard_text} -> {decision}"
-        )
-        return decision
-
     def _route_command(self, raw_text: str) -> bool:
         """
         Handle voice/typed control phrases robustly.
@@ -2130,9 +2225,32 @@ class App:
         # Command groups
         exit_vision = [
             "new topic", "switch to text", "text mode", "forget image", "clear image", "ignore the image",
-            "stop using the image", "no vision", "text only", "go back to text", "back to text"
+            "can I speak to Zen",
+            "stop using the image", "no vision", "text only", "go back to text", "can I speak to zen", "back to text",
+            "speak with zen", "speak to zen"
         ]
 
+        # === ADD STOP COMMANDS HERE ===
+        stop_commands = [
+            "stop", "stop speaking", "stop talking", "be quiet", "shut up",
+            "enough", "that's enough", "okay stop", "ok stop"
+        ]
+
+        debug_commands = [
+            "debug vision", "vision status", "vision debug", "show vision state"
+        ]
+
+        test_vision_commands = [
+            "test vision", "vision test", "check vision"
+        ]
+
+        # NEW: "what do you see" command patterns
+        what_see_commands = [
+            "what do you see", "what can you see", "whats happening", "what is happening",
+            "whats going on", "what is going on", "describe what you see", "tell me what you see",
+            "show me what you see", "what are you seeing", "whats in front of you",
+            "describe the scene", "whats around you", "whats in the room"
+        ]
         start_cam = [
             "start camera", "open camera", "turn on camera", "camera on",
             "start the camera", "enable camera"
@@ -2169,10 +2287,32 @@ class App:
             "speak with the image ai", "speak to the image ai", "talk to the image ai",
             "speak with the vision ai", "speak to the vision ai", "talk to the vision ai",
             "use the image ai", "use the vision ai",
-            "switch to vision", "switch to image","speak with the Guardian"
+            "switch to vision", "switch to image", "speak with the Guardian"
         ]
 
-        # Dispatch
+        # === DISPATCH ORDER: EXIT COMMANDS FIRST ===
+
+        # 1. EXIT VISION COMMANDS - HIGHEST PRIORITY
+        if matched(exit_vision):
+            self.logln(f"[command] Exit vision command detected: '{text}'")
+            self._last_was_vision = False
+            self._vision_context_until = 0.0
+            self._vision_turns_left = 0
+            try:
+                self.latex_win.set_scheme("default")
+            except Exception:
+                pass
+            self.logln("[vision] image context cleared; back to text mode")
+            return True
+
+        # 2. STOP COMMANDS
+        if matched(stop_commands):
+            self.logln("[command] Stop command detected - stopping speech")
+            self.stop_speaking()
+            self.set_light("idle")
+            return True
+
+        # 3. Camera control commands
         if matched(start_cam):
             self.start_camera_ui()
             self.set_light("idle")
@@ -2188,11 +2328,19 @@ class App:
             self.set_light("idle")
             return True
 
+        # 4. "What do you see" command
+        if matched(what_see_commands):
+            self.what_do_you_see_ui()
+            self.set_light("idle")
+            return True
+
+        # 5. Explain image commands
         if matched(explain_all):
             self.explain_last_image_ui()
             self.set_light("idle")
             return True
 
+        # 6. Vision mode commands
         if matched(vision_takeover):
             self._ensure_image_window()
             try:
@@ -2206,8 +2354,8 @@ class App:
                 pass
 
             self._last_was_vision = True
-            self._vision_turns_left = int(self.cfg.get("vision_followup_max_turns", 2))
-            self._vision_context_until = _t.monotonic() + float(self.cfg.get("vision_followup_s", 180))
+            self._vision_turns_left = int(self.cfg.get("vision_followup_max_turns", 3))
+            self._vision_context_until = _t.monotonic() + 300  # 5 minutes
 
             try:
                 self.latex_win.set_scheme("vision")
@@ -2218,19 +2366,28 @@ class App:
             self.set_light("idle")
             return True
 
-        if matched(exit_vision):
-            self._last_was_vision = False
-            self._vision_context_until = 0.0
-            self._vision_turns_left = 0
-            try:
-                self.latex_win.set_scheme("default")
-            except Exception:
-                pass
-            self.logln("[vision] image context cleared; back to text mode")
+        return False
+
+        # === TEST VISION COMMANDS ===
+        if matched(test_vision_commands):
+            self.logln("[vision-test] Running vision system test...")
+            self.debug_vision_state()
+            # Test if we have a current image
+            if self._last_image_path and os.path.exists(self._last_image_path):
+                self.logln(f"[vision-test] Current image: {os.path.basename(self._last_image_path)}")
+                self.ask_vision(self._last_image_path, "Describe this image briefly for testing.")
+            else:
+                self.logln("[vision-test] No current image available")
+            return True
+
+        # === DEBUG COMMANDS - PUT THIS LAST ===
+        if matched(debug_commands):
+            self.debug_vision_state()
+            self.set_light("idle")
             return True
 
         return False
-
+    # routine ends here
     def _ollama_generate(self, prompt: str, images=None):
         """
         Use Ollama REST directly when images are provided.
@@ -2274,6 +2431,19 @@ class App:
             raise RuntimeError(f"Ollama error {r.status_code}: {r.text[:500]}")
 
         return (r.json().get("response") or "").strip()
+
+    def _ollama_generate_with_retry(self, prompt: str, images=None, max_retries=2):
+        """Generate with vision model with retry logic"""
+        for attempt in range(max_retries + 1):
+            try:
+                return self._ollama_generate(prompt, images)
+            except Exception as e:
+                if attempt < max_retries:
+                    self.logln(f"[vision] attempt {attempt + 1} failed: {e}, retrying...")
+                    time.sleep(1)  # Brief pause before retry
+                else:
+                    self.logln(f"[vision] all {max_retries + 1} attempts failed")
+                    raise e
 
     # === UI Helper Methods ===
     def stop_speaking(self):
@@ -2664,6 +2834,46 @@ class App:
                 self.logln(f"[tts] vision (sapi5, fixed): {voice_id}")
                 return True
 
+            # Text keeps current selection
+            if engine == "sapi5":
+                import pyttsx3
+                voice_id = self.sapi_voice_var.get().split(" | ")[0]
+                tmp = out_wav + ".tmp.wav"
+                eng = pyttsx3.init()
+                eng.setProperty("voice", voice_id)
+                eng.save_to_file(text, tmp)
+                eng.runAndWait()
+                os.replace(tmp, out_wav)
+                self.logln(f"[tts] text (sapi5): {voice_id}")
+                return True
+            else:
+                from tts_edge import say as edge_say
+                v = self.edge_voice_var.get()
+                try:
+                    edge_say(text, voice=v, rate=self.cfg.get("rate", "-10%"), out_wav=out_wav)
+                    self.logln(f"[tts] text (edge): {v}")
+                    return True
+                except Exception as edge_error:
+                    self.logln(f"[tts] Edge TTS failed: {edge_error}, falling back to SAPI5")
+                    # Fallback to SAPI5
+                    import pyttsx3
+                    voice_id = self.sapi_voice_var.get().split(" | ")[0]
+                    tmp = out_wav + ".tmp.wav"
+                    eng = pyttsx3.init()
+                    eng.setProperty("voice", voice_id)
+                    eng.save_to_file(text, tmp)
+                    eng.runAndWait()
+                    os.replace(tmp, out_wav)
+                    self.logln(f"[tts] fallback to SAPI5: {voice_id}")
+                    return True
+
+        except Exception as e:
+            self.logln(f"[tts] error: {e}")
+            try:
+                messagebox.showerror("TTS error", str(e))
+            except:
+                pass
+            return False
             # Text keeps current selection
             if engine == "sapi5":
                 import pyttsx3
