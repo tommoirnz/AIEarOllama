@@ -28,6 +28,7 @@ import matplotlib
 # This uses two models and a different Json file and handles images as well
 #Look for the Json file  called Json2. You will need two models as per the Json file loaded into ollama
 #can read equations off paper and handwriting
+#This version does web searches too"
 matplotlib.rcParams["figure.max_open_warning"] = 0
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -4131,4 +4132,5 @@ if __name__ == "__main__":
     except Exception:
         pass
     app = App(root)
+
     root.mainloop()
