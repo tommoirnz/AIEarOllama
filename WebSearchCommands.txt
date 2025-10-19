@@ -1,0 +1,8 @@
+        search_commands = [
+            "search for", "search", "look up","information on", "find information about",
+            "web search", "search the web for", "look for","That's for","database","online"
+            # Removed standalone "find" - this was causing the problem
+        ]
+query]"
+
+Use any of these or change to meet your reuirements in main program that does web searches
