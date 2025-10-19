@@ -26,9 +26,9 @@ from io import BytesIO
 from PIL import Image, ImageTk
 import matplotlib
 # This uses two models and a different Json file and handles images as well
-#Look for the Json file  called Json2. You will need two models as per the Json file loaded into ollama
-#can read equations off paper and handwriting.
-#can do web searches
+# You will need two models as per the Json file loaded into ollama
+#can read equations off paper and handwriting
+#Can also do web searches
 matplotlib.rcParams["figure.max_open_warning"] = 0
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -76,7 +76,7 @@ except Exception:
 # External modules you provide
 from audio_io import list_input_devices, VADListener
 from asr_whisper import ASR
-from qwen_llm3 import QwenLLM
+from qwen_llmSearch import QwenLLM
 from pydub import AudioSegment
 
 # ===  ITEM DATACLASS ===
@@ -1755,6 +1755,7 @@ class App:
             self.cfg["whisper_device"],
             self.cfg["whisper_compute_type"],
             self.cfg["whisper_beam_size"]
+
         )
 
 
@@ -1767,6 +1768,8 @@ class App:
             temperature=self.cfg["qwen_temperature"],
             max_tokens=self.cfg["qwen_max_tokens"]
         )
+        # Give Qwen access to search functionality
+        self.qwen.set_search_handler(self.handle_ai_search_request)
 
         if hasattr(self.qwen, "model_path") and self.qwen.model_path:
             self.logln(f"[qwen] ✅ Using local GGUF model: {self.qwen.model_path}")
@@ -1783,7 +1786,16 @@ class App:
         )
         self.qwen.system_prompt = sys_prompt
         self.logln(f"[qwen] system prompt (first 80): {sys_prompt[:80]!r}")
+        # ADD THIS: Include current date AND time in system prompt
+        from datetime import datetime
+        current_datetime = datetime.now()
+        current_date = current_datetime.strftime("%B %d, %Y")
+        current_time = current_datetime.strftime("%I:%M %p")  # e.g., "02:30 PM"
 
+        date_time_aware_prompt = f"{sys_prompt}\n\nCurrent date and time: {current_date} at {current_time}. Always use this date and time when answering questions about time."
+
+        self.qwen.system_prompt = date_time_aware_prompt
+        self.logln(f"[qwen] system prompt with current datetime: {current_date} at {current_time}")
 
 
     def _apply_config_defaults(self):
@@ -2004,7 +2016,10 @@ class App:
                 self._last_was_vision = True  # Ensure this stays True
             else:
                 # normal text model path
-                reply = self.qwen.generate(text)
+                # Use search-enhanced generation
+                reply = self.qwen.generate_with_search(text)
+                reply = self._process_ai_response(reply)
+
                 # Only reset if we're definitely not in a vision context
                 if not self._should_use_vision_followup("dummy"):  # Check if context expired
                     self._update_vision_state(reset=True)
@@ -2102,6 +2117,81 @@ class App:
 
         self.set_light("listening")
         threading.Thread(target=_worker, daemon=True).start()
+
+    def handle_ai_search_request(self, search_query: str) -> str:
+        """
+        Handle search requests from the AI using the existing web search system
+        Returns search results as text that the AI can use
+        """
+        self.logln(f"[AI Search] Query: {search_query}")
+
+        try:
+            # Use your existing brave_search method
+            results = self.brave_search(search_query, 4)
+            search_summary = f"Search results for: {search_query}\n\n"
+
+            # Process results using your existing methods
+            for i, item in enumerate(results, 1):
+                try:
+                    html = self.polite_fetch(item.url)
+                    if html:
+                        # Use your existing text extraction
+                        text = self.extract_readable(html, item.url)
+                        if len(text) > 400:  # Only summarize if we got substantial content
+                            # Use your existing summarization
+                            summary = self.summarise_with_qwen(text[:15000], item.url, None)
+                            search_summary += f"## Result {i}: {item.title}\n"
+                            search_summary += f"URL: {item.url}\n"
+                            search_summary += f"Summary: {summary}\n\n"
+                        else:
+                            search_summary += f"## Result {i}: {item.title}\n"
+                            search_summary += f"URL: {item.url}\n"
+                            search_summary += f"Snippet: {item.snippet}\n\n"
+                    else:
+                        search_summary += f"## Result {i}: {item.title}\n"
+                        search_summary += f"URL: {item.url}\n"
+                        search_summary += f"Snippet: {item.snippet}\n\n"
+                except Exception as e:
+                    search_summary += f"## Result {i}: {item.title}\n"
+                    search_summary += f"URL: {item.url}\n"
+                    search_summary += f"Error processing: {str(e)}\n\n"
+                    continue
+
+            return search_summary
+
+        except Exception as e:
+            return f"Search failed: {str(e)}"
+
+    def _process_ai_response(self, response: str) -> str:
+        """
+        Process AI response and execute any search commands
+        """
+        import re
+
+        # Look for search commands in the response
+        search_pattern = r'\[SEARCH:\s*(.*?)\]'
+        searches = re.findall(search_pattern, response, re.IGNORECASE)
+
+        if searches:
+            self.logln(f"[AI] Detected {len(searches)} search request(s)")
+
+            all_search_results = ""
+            for search_query in searches:
+                clean_query = search_query.strip()
+                self.logln(f"[AI] Executing search: {clean_query}")
+
+                # Execute the search
+                search_results = self.handle_ai_search_request(clean_query)
+                all_search_results += f"\n\n--- SEARCH RESULTS: {clean_query} ---\n{search_results}"
+
+                # Update the response to include search results
+                response = response.replace(f"[SEARCH: {search_query}]", f"\n[I searched for: {clean_query}]")
+
+            # Append all search results to the final response
+            response += f"\n\n--- INCORPORATED SEARCH RESULTS ---{all_search_results}"
+
+        return response
+
 
     # === ENHANCED: pass_vision_to_text ===
     def pass_vision_to_text(self):
@@ -2498,7 +2588,9 @@ class App:
                     self._last_was_vision = True  # Ensure this is set
                 else:
                     self.logln("[vision][voice] not using vision (text-only)")
-                    reply = self.qwen.generate(text)
+                    reply = self.qwen.generate_with_search(text)
+                    reply = self._process_ai_response(reply)
+
                     # Only reset if we're definitely not in a vision context
                     if not self._should_use_vision_followup("dummy"):  # Check if context expired
                         self._update_vision_state(reset=True)
@@ -4116,22 +4208,14 @@ class App:
                 return
 
             try:
-                # Clean text for TTS
-                text_clean = re.sub(r'https?://\S+', '', text)
-                text_clean = re.sub(r'[*_`#=]', '', text_clean)
-                text_clean = re.sub(r'\s+', ' ', text_clean)
-                text_clean = re.sub(r'\(Publish/Update date:[^)]+\)', '', text_clean)
-                text_clean = re.sub(r'(Title:|URL:|Summary:)\s*', '', text_clean)
-                text_clean = text_clean.strip()
-
-                if not text_clean:
-                    return
-
-                # Use the main app's TTS system with proper token tracking
-                clean_tts_text = clean_for_tts(text_clean)
+                # Clean text for TTS - USE THE EXACT SAME CLEANING AS CHAT
+                clean_tts_text = clean_for_tts(text)  # ← Same as chat!
 
                 # Generate speech file
                 output_path = "out/search_results.wav"
+
+                # DIRECT CALL to synthesize_to_wav - no voice switching needed
+                # Since synthesize_to_wav already reads self.sapi_voice_var.get()
                 if self.synthesize_to_wav(clean_tts_text, output_path, role="text"):
                     # Use the EXACT SAME playback logic as main TTS
                     with self._play_lock:
@@ -4160,12 +4244,10 @@ class App:
                 self.interrupt_flag = False
                 self.set_light("idle")
 
-        # Start TTS in a separate thread
+        # Start TTS in a separate thread - NO VOICE CAPTURE NEEDED
+        # synthesize_to_wav will read the current voice selection automatically
         tts_thread = threading.Thread(target=_tts_worker, daemon=True)
         tts_thread.start()
-
-
-
 
 #End syththesise_search
 
@@ -4190,15 +4272,19 @@ class App:
             self.set_light("idle")
 
     def normalize_query(self, q: str) -> str:
-        """Add date context to time-related queries"""
+        """Add date context ONLY for specific time-related queries"""
         ql = q.lower()
         now = datetime.now()
+
+        # Only add dates for explicit time references
         if "today" in ql:
             q += " " + now.strftime("%Y-%m-%d")
-        if "yesterday" in ql:
+        elif "yesterday" in ql:
             q += " " + (now - timedelta(days=1)).strftime("%Y-%m-%d")
-        if "this week" in ql:
+        elif "this week" in ql:
             q += " " + now.strftime("week %G-W%V")
+        # DON'T add dates for "latest", "recent", "current" etc.
+
         return q
 
 
