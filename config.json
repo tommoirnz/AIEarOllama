@@ -22,7 +22,7 @@
   "out_wav": "out/last_reply.wav",
   "whisper_device": "cuda",
   "whisper_compute_type": "float16",
-  "whisper_model": "base.en",
+  "whisper_model": "medium.en",
   "whisper_beam_size": 5,
 
 "qwen_model_path.old": "qwen2.5:7b-instruct",
@@ -52,3 +52,4 @@
   "latex_text_family": "Segoe UI"
 
 }
+
