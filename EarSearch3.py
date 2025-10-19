@@ -27,8 +27,8 @@ from PIL import Image, ImageTk
 import matplotlib
 # This uses two models and a different Json file and handles images as well
 #Look for the Json file  called Json2. You will need two models as per the Json file loaded into ollama
-#can read equations off paper and handwriting
-#This version does web searches too"
+#can read equations off paper and handwriting.
+#can do web searches
 matplotlib.rcParams["figure.max_open_warning"] = 0
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -915,6 +915,7 @@ class RectAvatarWindow2(RectAvatarWindow):
 
 
 # === WEB SEARCH WINDOW CLASS ===
+# === WEB SEARCH WINDOW CLASS ===
 class WebSearchWindow(tk.Toplevel):
     def __init__(self, master, log_fn=None):
         super().__init__(master)
@@ -934,6 +935,10 @@ class WebSearchWindow(tk.Toplevel):
         self.thumb_placeholder = {}
         self._all_results = []
 
+        # LaTeX preview window for search results
+        self.latex_win = None
+        self.latex_auto = tk.BooleanVar(value=True)
+
         self._build_ui()
         self._build_strip_lights()
         self._tick_strip_lights()
@@ -948,6 +953,25 @@ class WebSearchWindow(tk.Toplevel):
         ttk.Label(self.main_container, text="Query:").pack(anchor="w")
         self.txt_in = tk.Text(self.main_container, height=3, wrap="word")
         self.txt_in.pack(fill=tk.X, pady=(2, 8))
+
+        # LaTeX controls for search results
+        latex_controls = ttk.Frame(self.main_container)
+        latex_controls.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Checkbutton(
+            latex_controls, text="Auto LaTeX preview for search results",
+            variable=self.latex_auto
+        ).pack(side="left", padx=(0, 10))
+
+        ttk.Button(
+            latex_controls, text="Show/Hide LaTeX",
+            command=self.toggle_latex
+        ).pack(side="left", padx=(0, 10))
+
+        ttk.Button(
+            latex_controls, text="Copy Raw LaTeX",
+            command=self.copy_raw_latex
+        ).pack(side="left")
 
         self.btn = ttk.Button(self.main_container, text="Search & Summarise", command=self.on_go)
         self.btn.pack(pady=(0, 8), anchor="w")
@@ -989,6 +1013,53 @@ class WebSearchWindow(tk.Toplevel):
         # Images container
         self.images_container = ttk.Frame(self.results_frame)
         self.images_container.pack(fill=tk.X, pady=8)
+
+    def _ensure_latex_window(self):
+        """Create LaTeX window if it doesn't exist"""
+        if self.latex_win is None or not self.latex_win.winfo_exists():
+            # Use the same settings as the main app's LaTeX window
+            self.latex_win = LatexWindow(
+                self.master,  # Use master (main app) as parent for consistency
+                log_fn=self._log,
+                text_family="Segoe UI",
+                text_size=12,
+                math_pt=8
+            )
+
+    def toggle_latex(self):
+        """Toggle LaTeX window visibility"""
+        self._ensure_latex_window()
+        try:
+            if self.latex_win.state() == "withdrawn":
+                self.latex_win.show()
+            else:
+                self.latex_win.hide()
+        except Exception:
+            self.latex_win.show()
+
+    def copy_raw_latex(self):
+        """Copy raw LaTeX to clipboard"""
+        self._ensure_latex_window()
+        try:
+            self.latex_win.copy_raw_latex()
+        except Exception as e:
+            self._log(f"[latex] copy raw failed: {e}")
+
+    def preview_latex(self, content: str):
+        """Preview LaTeX content using the same routine as main app"""
+        if not self.latex_auto.get():
+            return
+
+        self._ensure_latex_window()
+
+        def _go():
+            try:
+                self.latex_win.show()
+                self.latex_win.show_document(content)
+            except Exception as e:
+                self._log(f"[latex] preview error: {e}")
+
+        self.after(0, _go)
 
     def _build_strip_lights(self):
         self.strip_canvas = tk.Canvas(self, highlightthickness=0, bg="white")
@@ -1092,6 +1163,8 @@ class WebSearchWindow(tk.Toplevel):
         self.thumb_target.clear()
         self.thumb_placeholder.clear()
         self._all_results.clear()
+        # Reset accumulated LaTeX content for new search
+        self._accumulated_latex_content = ""
 
         self.in_progress = True
         self.btn.config(state="disabled")
@@ -1158,29 +1231,38 @@ class WebSearchWindow(tk.Toplevel):
         if not self._all_results:
             return "No results to summarize."
 
-        summary_parts = ["Search Results Summary:"]
+        # Use the ACCUMULATED content that already has all the equations
+        if hasattr(self, '_accumulated_latex_content') and self._accumulated_latex_content:
+            final_text = "COMPLETE SEARCH RESULTS WITH EQUATIONS:\n\n" + self._accumulated_latex_content
+        else:
+            # Fallback to the original summary method
+            summary_parts = ["Search Results Summary:"]
+            for i, result in enumerate(self._all_results, 1):
+                title = result.get('title', 'No title')
+                summary = result.get('summary', 'No summary available')
 
-        for i, result in enumerate(self._all_results, 1):
-            title = result.get('title', 'No title')
-            summary = result.get('summary', 'No summary available')
+                # Clean up the summary text but preserve equations
+                clean_summary = re.sub(r'=+', '', summary)
+                clean_summary = re.sub(r'\s+', ' ', clean_summary).strip()
+                clean_summary = re.sub(r'[\*#_-]{2,}', '', clean_summary)
+                clean_summary = re.sub(r'^(summary|result|findings?):?\s*', '', clean_summary, flags=re.IGNORECASE)
 
-            # Clean up the summary text
-            clean_summary = re.sub(r'=+', '', summary)
-            clean_summary = re.sub(r'\s+', ' ', clean_summary).strip()
-            clean_summary = re.sub(r'[\*#_-]{2,}', '', clean_summary)
-            clean_summary = re.sub(r'^(summary|result|findings?):?\s*', '', clean_summary, flags=re.IGNORECASE)
+                if len(clean_summary) > 250:
+                    clean_summary = clean_summary[:247] + "..."
 
-            if len(clean_summary) > 250:
-                clean_summary = clean_summary[:247] + "..."
+                summary_parts.append(f"Result {i}: {title}")
+                if clean_summary and clean_summary != "No summary available":
+                    summary_parts.append(f"{clean_summary}")
+                summary_parts.append("")
 
-            summary_parts.append(f"Result {i}: {title}")
-            if clean_summary and clean_summary != "No summary available":
-                summary_parts.append(f"{clean_summary}")
-            summary_parts.append("")
+            final_text = "\n".join(summary_parts)
+            final_text = re.sub(r'\n{3,}', '\n\n', final_text)
 
-        final_text = "\n".join(summary_parts)
-        final_text = re.sub(r'\n{3,}', '\n\n', final_text)
+        # PREVIEW LATEX FOR THE FINAL ACCUMULATED CONTENT
+        self.preview_latex(final_text)
+
         return final_text.strip()
+
 
     def _poll_queue(self):
         try:
@@ -1252,6 +1334,18 @@ class WebSearchWindow(tk.Toplevel):
     def append_output(self, block: str):
         self.txt_out.insert("end", block + "\n\n")
         self.txt_out.see("end")
+
+        # ACCUMULATE all results for LaTeX preview instead of overwriting
+        if not hasattr(self, '_accumulated_latex_content'):
+            self._accumulated_latex_content = ""
+
+        # Add this result to the accumulated content
+        self._accumulated_latex_content += block + "\n\n"
+
+        # Preview the ACCUMULATED content (all results so far)
+        self.preview_latex(self._accumulated_latex_content)
+
+
 
     def _show_images(self, urls: List[str], article_title: str, article_url: str):
         try:
@@ -1360,7 +1454,16 @@ class WebSearchWindow(tk.Toplevel):
     def destroy(self):
         """Proper cleanup when window is closed"""
         self.in_progress = False
+        # Close LaTeX window if open
+        if self.latex_win and self.latex_win.winfo_exists():
+            try:
+                self.latex_win.destroy()
+            except:
+                pass
         super().destroy()
+
+
+
 # === END WEB SEARCH WINDOW ===
 #
 
@@ -3897,73 +4000,71 @@ class App:
         text = text[:20000]  # Limit text length
         pd_line = f"(Publish/Update date: {pubdate})\n" if pubdate else ""
 
-        prompt = (
-            "You are a precise factual summariser. "
-            "Read the following webpage text and create 8–12 bullet points summarising only concrete information. "
-            "Follow these strict rules:\n"
-            "- Include only verifiable facts: names, dates, places, events, numbers, and direct findings.\n"
-            "- Exclude any introductions, opinions, quotes, speculation, or generic commentary.\n"
-            "- Do NOT restate the title, say 'the article discusses', or include words like 'this article'.\n"
-            "- Use short, crisp bullet points (1 sentence each).\n"
-            "- If the text lacks facts, write 'Not enough factual content to summarise.'\n"
+        # FIRST PASS: Extract mathematical content specifically
+        math_prompt = (
+            "Extract ALL mathematical equations, formulas, and technical content from the following text. "
+            "Preserve them exactly in their original LaTeX format ($$...$$, \\[...\\], $...$, etc.).\n"
+            "Include:\n"
+            "- All equations and formulas\n"
+            "- Mathematical expressions\n"
+            "- Chemical formulas\n"
+            "- Code snippets\n"
+            "- Important technical definitions\n"
+            "Output the mathematical/technical content exactly as found, without summarization.\n"
+            f"{pd_line}"
+            f"Source: {url}\n\nCONTENT:\n{text[:10000]}"  # Use first 10k chars for math extraction
+        )
+
+        # SECOND PASS: Create a summary that REFERENCES the preserved math
+        summary_prompt = (
+            "Create a comprehensive summary (10-15 bullet points) that includes:\n"
+            "- Key findings and conclusions\n"
+            "- Important data points and results\n"
+            "- References to mathematical content (say 'see equation X' or 'the formula shows')\n"
+            "- Main arguments and evidence\n"
+            "- Do NOT remove technical details - include them in context\n"
+            "- Preserve specific numbers, measurements, and quantitative results\n"
+            "Be detailed enough to be useful for technical analysis.\n"
             f"{pd_line}"
             f"Source: {url}\n\nCONTENT:\n{text}"
         )
+
         try:
-            # Try using the local Qwen instance first
-            return self.master.qwen.generate(prompt)
+            # Get mathematical content
+            math_content = self.qwen.generate(math_prompt)
+
+            # Get comprehensive summary
+            summary = self.qwen.generate(summary_prompt)
+
+            # Combine both with clear separation
+            combined_result = f"MATHEMATICAL CONTENT:\n{math_content}\n\nSUMMARY:\n{summary}"
+
+            return combined_result
+
         except Exception:
-            # Fallback to Ollama API
+            # Fallback: Use a more math-friendly single prompt
+            fallback_prompt = (
+                "Create a DETAILED technical summary (12-18 bullet points) that PRESERVES all mathematical content.\n"
+                "CRITICAL: Keep ALL equations, formulas, and LaTeX expressions exactly as they appear.\n"
+                "Include:\n"
+                "- Complete equations in $$...$$, \\[...\\], $...$ format\n"
+                "- Mathematical proofs and derivations\n"
+                "- Chemical formulas and reactions\n"
+                "- Code snippets and algorithms\n"
+                "- Quantitative results with exact numbers\n"
+                "- Do NOT simplify or remove technical details\n"
+                "- Focus on preserving the mathematical richness of the content\n"
+                f"{pd_line}"
+                f"Source: {url}\n\nCONTENT:\n{text}"
+            )
             try:
-                payload = {"model": "qwen2.5:7b-instruct", "prompt": prompt, "stream": False}
+                payload = {"model": "qwen2.5:7b-instruct", "prompt": fallback_prompt, "stream": False}
                 with httpx.Client(timeout=90.0) as client:
                     r = client.post("http://localhost:11434/api/generate", json=payload)
                     r.raise_for_status()
                     return r.json().get("response", "").strip()
             except Exception as e:
                 return f"Summarization failed: {e}"
-
-
-    def polite_fetch(self, url: str):
-        headers = {"User-Agent": "LocalAI-ResearchBot/1.0"}
-        try:
-            with httpx.Client(timeout=25.0, headers=headers, follow_redirects=True) as client:
-                r = client.get(url)
-                r.raise_for_status()
-                return r.text
-        except Exception:
-            return None
-
-
-    def extract_readable(self, html: str, url: str = None):
-        text = trafilatura.extract(html, url=url, include_links=False, include_formatting=False)
-        return text or ""
-
-
-    def guess_pubdate(self, html: str):
-        try:
-            soup = BeautifulSoup(html, "lxml")
-        except Exception:
-            return None
-
-        metas = [
-            ("property", "article:published_time"), ("property", "og:published_time"),
-            ("property", "og:updated_time"), ("name", "pubdate"), ("name", "publication_date"),
-            ("name", "date"), ("name", "dc.date"), ("name", "dc.date.issued"),
-            ("name", "sailthru.date"), ("itemprop", "datePublished"), ("itemprop", "dateModified"),
-        ]
-
-        for key, val in metas:
-            tag = soup.find("meta", attrs={key: val})
-            if tag and tag.get("content"):
-                return tag["content"]
-
-        t = soup.find("time")
-        if t and (t.get("datetime") or (t.text and t.text.strip())):
-            return t.get("datetime") or t.text.strip()
-        return None
-
-
     def extract_images(self, html: str, base_url: str, limit: int = 3):
         urls = []
         try:
@@ -4132,5 +4233,4 @@ if __name__ == "__main__":
     except Exception:
         pass
     app = App(root)
-
     root.mainloop()
