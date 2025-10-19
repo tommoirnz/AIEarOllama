@@ -5,4 +5,4 @@
         ]
 query]"
 
-Use any of these or change to meet your reuirements in main program that does web searches
+Use any of these or change to meet your requirements in main program that does web searches ie EarSearch3.py
