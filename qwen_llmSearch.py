@@ -153,6 +153,11 @@ class QwenLLM:
             - Recent research papers or scientific discoveries
             - Current prices, product information, or market data
             - Information that may have changed since your training data
+            - Political Information
+            - Bus or Train timetables
+            - Flights or flight times
+            - Weather information
+            - TV or Television programming timetables
     
             Do NOT search for:
             - General knowledge that you already know well
@@ -162,6 +167,7 @@ class QwenLLM:
     
             Search examples:
             Good: [SEARCH: latest iPhone 15 specifications and prices]
+            Good: [SEARCH: who is the current prime minister of a country]
             Good: [SEARCH: current climate change policy updates 2024]
             Good: [SEARCH: recent breakthroughs in quantum computing 2024]
             Avoid: [SEARCH: what is photosynthesis]
