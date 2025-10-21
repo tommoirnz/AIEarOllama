@@ -855,13 +855,13 @@ class RectAvatarWindow(tk.Toplevel):
         self._particles = alive
 
 
-
 class RectAvatarWindow2(RectAvatarWindow):
     """
     Rectangles (circular window):
     - Inherits modulation: call self.avatar.set_level(level) from your WAV timer.
     - Window is circular via transparent mask (keeps bars inside the circle).
     - Spawns within a radius, clips bars to the circle chord, gentle center pull.
+    - MOUSE SCALING: Use mouse wheel to scale the avatar size
     """
 
     # --- circular-window specifics / tunables ---
@@ -872,10 +872,20 @@ class RectAvatarWindow2(RectAvatarWindow):
     CENTER_PULL = 0.07  # 0.. (per-second pull toward center)
     VERTICAL_PROPORTION = 0.40  # share of vertical bars
 
+    # --- scaling parameters ---
+    SCALE_MIN = 0.3  # minimum scale factor
+    SCALE_MAX = 2.0  # maximum scale factor
+    SCALE_STEP = 0.1  # scaling step per mouse wheel click
+
     def __init__(self, master):
         # build the base window + canvas
         super().__init__(master)
         self.title("Avatar — Rectangles (circle)")
+
+        # Initialize scaling
+        self._scale_factor = 1.0
+        self._base_diameter = self.CIRCLE_DIAM
+
         # make the toplevel circular via transparent color
         try:
             self.overrideredirect(True)
@@ -888,28 +898,74 @@ class RectAvatarWindow2(RectAvatarWindow):
             pass
 
         # size + center on screen
-        try:
-            self.geometry(f"{self.CIRCLE_DIAM}x{self.CIRCLE_DIAM}")
-            sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-            x = max(0, (sw - self.CIRCLE_DIAM) // 2)
-            y = max(0, (sh - self.CIRCLE_DIAM) // 2)
-            self.geometry(f"{self.CIRCLE_DIAM}x{self.CIRCLE_DIAM}+{x}+{y}")
-        except Exception:
-            pass
+        self._update_window_size()
 
         # simple drag-to-move (no title bar)
         self._drag = {"x": 0, "y": 0}
         self.bind("<Button-1>", self._start_drag)
         self.bind("<B1-Motion>", self._do_drag)
 
-    # ----- drag helpers -----
+        # === ADD MOUSE WHEEL BINDING FOR SCALING ===
+        self.bind("<MouseWheel>", self._on_mouse_wheel)  # Windows
+        self.bind("<Button-4>", self._on_mouse_wheel)  # Linux scroll up
+        self.bind("<Button-5>", self._on_mouse_wheel)  # Linux scroll down
+
+        # Also bind to canvas for when mouse is over particles
+        self.canvas.bind("<MouseWheel>", self._on_mouse_wheel)
+        self.canvas.bind("<Button-4>", self._on_mouse_wheel)
+        self.canvas.bind("<Button-5>", self._on_mouse_wheel)
+
+    # ----- scaling methods -----
+    def _update_window_size(self):
+        """Update window size based on current scale factor"""
+        current_diameter = int(self._base_diameter * self._scale_factor)
+        try:
+            # Get current position to maintain location
+            current_geometry = self.geometry()
+            if '+' in current_geometry:
+                # Extract position from geometry string "WxH+X+Y"
+                parts = current_geometry.split('+')
+                if len(parts) == 3:
+                    x_pos, y_pos = int(parts[1]), int(parts[2])
+                    self.geometry(f"{current_diameter}x{current_diameter}+{x_pos}+{y_pos}")
+                else:
+                    self.geometry(f"{current_diameter}x{current_diameter}")
+            else:
+                self.geometry(f"{current_diameter}x{current_diameter}")
+        except Exception:
+            self.geometry(f"{current_diameter}x{current_diameter}")
+
+    def _on_mouse_wheel(self, event):
+        """Handle mouse wheel events for scaling"""
+        if event.delta > 0 or event.num == 4:  # Scroll up
+            new_scale = min(self.SCALE_MAX, self._scale_factor + self.SCALE_STEP)
+        else:  # Scroll down
+            new_scale = max(self.SCALE_MIN, self._scale_factor - self.SCALE_STEP)
+
+        if new_scale != self._scale_factor:
+            self._scale_factor = new_scale
+            self._update_window_size()
+            self.log_scale_change()
+
+    def log_scale_change(self):
+        """Log scale change (you can connect this to your main app's logln)"""
+        try:
+            # Try to use main app's logging if available
+            if hasattr(self.master, 'logln'):
+                self.master.logln(f"[avatar] Scale: {self._scale_factor:.1f}x")
+            else:
+                print(f"[avatar] Scale: {self._scale_factor:.1f}x")
+        except:
+            print(f"[avatar] Scale: {self._scale_factor:.1f}x")
+
+    # ----- drag helpers (updated for scaling) -----
     def _start_drag(self, e):
         self._drag["x"], self._drag["y"] = e.x_root - self.winfo_x(), e.y_root - self.winfo_y()
 
     def _do_drag(self, e):
         self.geometry(f"+{e.x_root - self._drag['x']}+{e.y_root - self._drag['y']}")
 
-    # ----- circle geometry / sampling -----
+    # ----- circle geometry / sampling (updated for scaling) -----
     def _circle_geom(self):
         cw = max(1, self.canvas.winfo_width())
         ch = max(1, self.canvas.winfo_height())
@@ -1069,8 +1125,23 @@ class RectAvatarWindow2(RectAvatarWindow):
 
         self._particles = alive
 
+    # ----- public methods for external control -----
+    def set_scale(self, scale_factor: float):
+        """Programmatically set scale factor"""
+        self._scale_factor = max(self.SCALE_MIN, min(self.SCALE_MAX, scale_factor))
+        self._update_window_size()
+        self.log_scale_change()
 
-# === WEB SEARCH WINDOW CLASS ===
+    def get_scale(self) -> float:
+        """Get current scale factor"""
+        return self._scale_factor
+
+    def reset_scale(self):
+        """Reset to default scale"""
+        self._scale_factor = 1.0
+        self._update_window_size()
+        self.log_scale_change()
+
 # === WEB SEARCH WINDOW CLASS ===
 class WebSearchWindow(tk.Toplevel):
     def __init__(self, master, log_fn=None):
