@@ -164,15 +164,24 @@ def purge_temp_images(folder="out"):
 
 
 # === LaTeX Window ===
+
 class LatexWindow(tk.Toplevel):
     def __init__(self, master, log_fn=None, text_family="Segoe UI", text_size=12, math_pt=8):
         super().__init__(master)
         self.title("LaTeX Preview")
         self.protocol("WM_DELETE_WINDOW", self.hide)
-        self.geometry("560x400")
+        self.geometry("800x600")
         self._log = log_fn or (lambda msg: None)
 
-        # Initialize defaults before creating IntVars
+        # === PERMANENT DARK MODE COLORS ===
+        self.dark_bg = "#000000"  # Black background
+        self.dark_fg = "#ffffff"  # White text
+        self.dark_highlight = "#4a86e8"  # Blue highlight
+
+        # === SET WINDOW BACKGROUND (FRAME) ===
+        self.configure(bg=self.dark_bg)  # Start with black frame
+
+        # Initialize defaults
         self.text_family = text_family
         self.text_size = int(text_size)
         self.math_pt = int(math_pt)
@@ -188,10 +197,11 @@ class LatexWindow(tk.Toplevel):
         container = ttk.Frame(self)
         container.pack(fill="both", expand=True)
 
-        # --- Top bar ---
+        # --- Top bar - SIMPLIFIED (NO DARK MODE TOGGLE) ---
         topbar = ttk.Frame(container)
         topbar.pack(fill="x", padx=6, pady=(6, 2))
 
+        # === TOP BAR CONTROLS ===
         ttk.Checkbutton(
             topbar, text="Show raw LaTeX",
             variable=self.show_raw,
@@ -201,6 +211,7 @@ class LatexWindow(tk.Toplevel):
         ttk.Button(topbar, text="Copy Raw LaTeX", command=self.copy_raw_latex).pack(side="left", padx=(8, 6))
         ttk.Button(topbar, text="LaTeX Diagnostics", command=self._run_latex_diagnostics).pack(side="left")
 
+        # === TEXT SIZE CONTROLS ===
         ttk.Label(topbar, text="Text pt").pack(side="left", padx=(12, 2))
         self.text_pt_var = tk.IntVar(value=self.text_size)
         txt_spin = ttk.Spinbox(
@@ -219,19 +230,37 @@ class LatexWindow(tk.Toplevel):
         )
         math_spin.pack(side="left")
 
+        # === WINDOW SIZE CONTROLS ===
+        ttk.Button(topbar, text="📐 Size+", command=self._increase_size).pack(side="right", padx=(6, 2))
+        ttk.Button(topbar, text="📐 Size-", command=self._decrease_size).pack(side="right", padx=(2, 6))
+
         txt_spin.bind("<Return>", lambda _e: self.set_text_font(size=self.text_pt_var.get()))
         math_spin.bind("<Return>", lambda _e: self.set_math_pt(self.math_pt_var.get()))
 
-        # --- Text + Scrollbar ---
+        # --- Text + Scrollbar with PERMANENT DARK THEME ---
         textwrap = ttk.Frame(container)
         textwrap.pack(fill="both", expand=True)
-        self.textview = tk.Text(textwrap, bg="#ffffff", fg="#111", wrap="word", undo=False)
+
+        # === MAIN TEXT WIDGET - ALWAYS DARK ===
+        self.textview = tk.Text(
+            textwrap,
+            bg=self.dark_bg,  # Black background
+            fg=self.dark_fg,  # White text
+            wrap="word",
+            undo=False,
+            insertbackground=self.dark_fg,  # White cursor
+            selectbackground=self.dark_highlight,  # Blue selection
+            inactiveselectbackground=self.dark_highlight  # Blue selection when not focused
+        )
+
         vbar = ttk.Scrollbar(textwrap, orient="vertical", command=self.textview.yview)
         self.textview.configure(yscrollcommand=vbar.set)
         vbar.pack(side="right", fill="y")
         self.textview.pack(side="left", fill="both", expand=True)
 
         self.textview.configure(font=self._text_font, state="normal")
+
+        # === TEXT BINDINGS ===
         self.textview.bind("<Key>", self._block_keys)
         self.textview.bind("<<Paste>>", lambda e: "break")
         self.textview.bind("<Control-v>", lambda e: "break")
@@ -239,73 +268,41 @@ class LatexWindow(tk.Toplevel):
         self.textview.bind("<Control-c>", lambda e: None)
         self.textview.bind("<Control-a>", self._select_all)
 
-        # --- Context menu ---
-        self._menu = tk.Menu(self, tearoff=0)
+        # --- Context menu with DARK THEME ---
+        self._menu = tk.Menu(self, tearoff=0, bg=self.dark_bg, fg=self.dark_fg)
         self._menu.add_command(label="Copy", command=lambda: self.textview.event_generate("<<Copy>>"))
         self._menu.add_command(label="Select All", command=lambda: self._select_all(None))
         self._menu.add_separator()
         self._menu.add_command(label="Copy Raw LaTeX", command=self.copy_raw_latex)
+        # NO DARK MODE TOGGLE IN MENU
         self.textview.bind("<Button-3>", self._popup_menu)
         self.textview.bind("<Button-2>", self._popup_menu)
 
-        # --- Highlight tags + tighter spacing ---
-        self.textview.tag_configure("speak", background="#fff3a3")
+        # --- Highlight tags for DARK MODE ---
+        self.textview.tag_configure("speak", background=self.dark_highlight, foreground=self.dark_bg)
         self.textview.tag_configure("normal", background="")
         self.textview.tag_configure("tight", spacing1=1, spacing3=1)
 
-        # Theme defaults (must be AFTER self.textview exists)
-        self._default_bg = "#ffffff"
-        self._default_fg = "#111"
-
         self.withdraw()
 
-    # --------- Theme toggle (used to blue-tint in vision mode) ----------
-    def set_scheme(self, scheme: str):
-        """Switch between default and vision mode (blue background)."""
-        try:
-            if scheme == "vision":
-                self.textview.configure(bg="#e8f1ff", fg="#0b2545")  # soft blue scheme
-            else:
-                self.textview.configure(bg=self._default_bg, fg=self._default_fg)
-        except Exception:
-            pass
-
-    # ---------- Helpers ----------
-    def _block_keys(self, e):
-        if (e.state & 0x4) and e.keysym.lower() in ("c", "a"):
-            return None
-        return "break"
-
-    def _select_all(self, _):
-        self.textview.tag_add("sel", "1.0", "end-1c")
-        return "break"
-
-    def _popup_menu(self, event):
-        try:
-            self._menu.tk_popup(event.x_root, event.y_root)
-        finally:
-            self._menu.grab_release()
-
-    def copy_raw_latex(self):
-        try:
-            self.clipboard_clear()
-            self.clipboard_append(self._last_text or "")
-            self._log("[latex] raw source copied to clipboard")
-        except Exception as e:
-            self._log(f"[latex] copy raw failed: {e}")
+    # ==================== ESSENTIAL WINDOW METHODS ====================
 
     def show(self):
+        """Show the window"""
         self.deiconify()
         self.lift()
 
     def hide(self):
+        """Hide the window"""
         self.withdraw()
 
     def clear(self):
+        """Clear the content"""
         self.textview.delete("1.0", "end")
         self._img_refs.clear()
 
     def set_text_font(self, family=None, size=None):
+        """Set text font family and/or size"""
         if family is not None:
             self.text_family = family
         if size is not None:
@@ -317,12 +314,102 @@ class LatexWindow(tk.Toplevel):
             self._log(f"[latex] set_text_font error: {e}")
 
     def set_math_pt(self, pt: int):
+        """Set math point size"""
         try:
             self.math_pt = int(pt)
         except Exception as e:
             self._log(f"[latex] set_math_pt error: {e}")
 
+    # ==================== SCHEME METHOD (VISION MODE) ====================
+
+    def set_scheme(self, scheme: str):
+        """
+        Switch frame color for vision mode while keeping content dark.
+        Called by App._latex_theme() for visual distinction.
+        """
+        try:
+            if scheme == "vision":
+                # Vision mode: Blue frame, same dark content
+                vision_frame = "#1a3a5a"  # Dark blue frame
+                self.configure(bg=vision_frame)
+
+                # Optional: Slightly different highlight for vision mode
+                vision_highlight = "#4a86e8"  # Blue highlight
+                self.textview.tag_configure("speak", background=vision_highlight, foreground=self.dark_bg)
+
+                self._log("[latex] Frame set to VISION mode (blue)")
+
+            else:
+                # Default mode: Black frame
+                self.configure(bg=self.dark_bg)
+
+                # Default highlight
+                self.textview.tag_configure("speak", background=self.dark_highlight, foreground=self.dark_bg)
+
+                self._log("[latex] Frame set to DEFAULT mode (black)")
+
+        except Exception as e:
+            self._log(f"[latex] set_scheme error: {e}")
+
+    # ==================== WINDOW SIZE CONTROL METHODS ====================
+
+    def _increase_size(self):
+        """Increase window size by 100x80 pixels"""
+        width, height = self._get_current_size()
+        new_width = min(2000, width + 100)
+        new_height = min(1200, height + 80)
+        self.geometry(f"{new_width}x{new_height}")
+
+    def _decrease_size(self):
+        """Decrease window size by 100x80 pixels"""
+        width, height = self._get_current_size()
+        new_width = max(400, width - 100)
+        new_height = max(300, height - 80)
+        self.geometry(f"{new_width}x{new_height}")
+
+    def _get_current_size(self):
+        """Get current window size from geometry string"""
+        geometry = self.geometry()
+        if 'x' in geometry and '+' in geometry:
+            # Format: "widthxheight+x+y"
+            size_part = geometry.split('+')[0]
+            width, height = map(int, size_part.split('x'))
+            return width, height
+        return 800, 600  # Default size
+
+    # ==================== UI HELPER METHODS ====================
+
+    def _block_keys(self, e):
+        """Block most keys except copy/select all"""
+        if (e.state & 0x4) and e.keysym.lower() in ("c", "a"):
+            return None
+        return "break"
+
+    def _select_all(self, _):
+        """Select all text"""
+        self.textview.tag_add("sel", "1.0", "end-1c")
+        return "break"
+
+    def _popup_menu(self, event):
+        """Show right-click context menu"""
+        try:
+            self._menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self._menu.grab_release()
+
+    def copy_raw_latex(self):
+        """Copy raw LaTeX source to clipboard"""
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(self._last_text or "")
+            self._log("[latex] raw source copied to clipboard")
+        except Exception as e:
+            self._log(f"[latex] copy raw failed: {e}")
+
+    # ==================== LATEX RENDERING METHODS ====================
+
     def _is_inline_math(self, expr: str) -> bool:
+        """Check if math expression should be rendered inline"""
         s = expr.strip()
         if "\n" in s: return False
         if re.search(r"\\begin\{.*?\}", s): return False
@@ -331,6 +418,7 @@ class LatexWindow(tk.Toplevel):
         return True
 
     def _needs_latex_engine(self, s: str) -> bool:
+        """Check if expression requires full LaTeX engine"""
         return bool(re.search(
             r"(\\begin\{(?:bmatrix|pmatrix|Bmatrix|vmatrix|Vmatrix|matrix|cases|smallmatrix)\})"
             r"|\\boxed\s*\(" r"|\\boxed\s*\{"
@@ -338,30 +426,13 @@ class LatexWindow(tk.Toplevel):
             s, flags=re.IGNORECASE
         ))
 
-    def _render_with_engine(self, latex: str, fontsize: int, dpi: int, use_usetex: bool):
-        preamble = r"\usepackage{amsmath,amssymb,bm}"
-        rc = {'text.usetex': bool(use_usetex)}
-        if use_usetex:
-            rc['text.latex.preamble'] = preamble
-        fig = plt.figure(figsize=(1, 1), dpi=dpi)
-        try:
-            with matplotlib.rc_context(rc):
-                ax = fig.add_axes([0, 0, 1, 1])
-                ax.axis("off")
-                ax.text(0.5, 0.5, f"${latex}$", ha="center", va="center", fontsize=fontsize)
-                buf = BytesIO()
-                fig.savefig(buf, format="png", bbox_inches="tight", pad_inches=0.02, transparent=True)
-                return buf.getvalue()
-        finally:
-            plt.close(fig)
-            plt.close('all')
-
     def _probe_usetex(self):
+        """Check if LaTeX engine is available"""
         if self._usetex_checked:
             return
         self._usetex_checked = True
         try:
-            _ = self._render_with_engine(r"\begin{pmatrix}1&2\\3&4\end{pmatrix}", 10, 100, use_usetex=True)
+            _ = self._render_with_engine_dark(r"\begin{pmatrix}1&2\\3&4\end{pmatrix}", 10, 100, use_usetex=True)
             self._usetex_available = True
             self._log("[latex] usetex available")
         except Exception as e:
@@ -369,20 +440,58 @@ class LatexWindow(tk.Toplevel):
             self._log(f"[latex] usetex not available ({e}); fallback to MathText)")
 
     def render_png_bytes(self, latex, fontsize=None, dpi=200):
+        """Render LaTeX to PNG bytes (ALWAYS WHITE ON TRANSPARENT)"""
         fontsize = fontsize or self.math_pt
         expr = latex.strip()
         needs_tex = self._needs_latex_engine(expr)
         if needs_tex and not self._usetex_checked:
             self._probe_usetex()
         prefer_usetex = self._usetex_available and (
-                    needs_tex or "\\begin{pmatrix" in expr or "\\frac" in expr or "\\sqrt" in expr)
+                needs_tex or "\\begin{pmatrix" in expr or "\\frac" in expr or "\\sqrt" in expr)
         expr = expr.replace("\n", " ")
         try:
-            return self._render_with_engine(expr, fontsize, dpi, use_usetex=prefer_usetex)
+            return self._render_with_engine_dark(expr, fontsize, dpi, use_usetex=prefer_usetex)
         except Exception:
-            return self._render_with_engine(expr, fontsize, dpi, use_usetex=False)
+            return self._render_with_engine_dark(expr, fontsize, dpi, use_usetex=False)
+
+    def _render_with_engine_dark(self, latex: str, fontsize: int, dpi: int, use_usetex: bool):
+        """Render LaTeX with white text on transparent background"""
+        preamble = r"\usepackage{amsmath,amssymb,bm}"
+        rc = {'text.usetex': bool(use_usetex)}
+
+        # === PERMANENT DARK MODE: Always white text ===
+        rc.update({
+            'text.color': 'white',
+            'axes.edgecolor': 'white',
+            'axes.labelcolor': 'white',
+            'xtick.color': 'white',
+            'ytick.color': 'white'
+        })
+
+        if use_usetex:
+            preamble += r"\usepackage{xcolor} \definecolor{textcolor}{RGB}{255,255,255} \color{textcolor}"
+            rc['text.latex.preamble'] = preamble
+            text_color = "white"
+        else:
+            text_color = "white"
+
+        fig = plt.figure(figsize=(1, 1), dpi=dpi, facecolor='none')
+        try:
+            with matplotlib.rc_context(rc):
+                ax = fig.add_axes([0, 0, 1, 1])
+                ax.axis("off")
+                ax.text(0.5, 0.5, f"${latex}$", ha="center", va="center",
+                        fontsize=fontsize, color=text_color)
+                buf = BytesIO()
+                fig.savefig(buf, format="png", bbox_inches="tight", pad_inches=0.02,
+                            transparent=True, facecolor='none', edgecolor='none')
+                return buf.getvalue()
+        finally:
+            plt.close(fig)
+            plt.close('all')
 
     def split_text_math(self, text):
+        """Split text into math and non-math blocks"""
         if not text:
             return []
         pattern = re.compile(
@@ -408,6 +517,7 @@ class LatexWindow(tk.Toplevel):
         return out
 
     def show_document(self, text, wrap=900):
+        """Main method to display LaTeX content"""
         self._last_text = text or ""
         self.clear()
         if not text:
@@ -453,8 +563,10 @@ class LatexWindow(tk.Toplevel):
         self.textview.insert("end", "\n")
         self._prepare_word_spans()
 
-    # ---------- Highlight helpers ----------
+    # ==================== HIGHLIGHT METHODS ====================
+
     def _word_spans(self):
+        """Get word positions for TTS highlighting"""
         content = self.textview.get("1.0", "end-1c")
         spans = []
         for m in re.finditer(r"[A-Za-z0-9]+(?:'[A-Za-z0-9]+)?", content):
@@ -463,6 +575,7 @@ class LatexWindow(tk.Toplevel):
         return spans
 
     def _prepare_word_spans(self):
+        """Prepare word spans for TTS highlighting"""
         try:
             self._hi_spans = self._word_spans()
             self._hi_n = len(self._hi_spans)
@@ -470,6 +583,7 @@ class LatexWindow(tk.Toplevel):
             self._hi_spans, self._hi_n = [], 0
 
     def set_highlight_index(self, i: int):
+        """Set highlight to specific word index"""
         if not getattr(self, "_hi_spans", None):
             return
         i = max(0, min(i, self._hi_n - 1))
@@ -479,6 +593,7 @@ class LatexWindow(tk.Toplevel):
         self.textview.see(s)
 
     def set_highlight_ratio(self, r: float):
+        """Set highlight based on ratio (0.0 to 1.0)"""
         if not getattr(self, "_hi_spans", None):
             return
         if r <= 0:
@@ -490,9 +605,13 @@ class LatexWindow(tk.Toplevel):
         self.set_highlight_index(idx)
 
     def clear_highlight(self):
+        """Clear all highlights"""
         self.textview.tag_remove("speak", "1.0", "end")
 
+    # ==================== DIAGNOSTIC METHOD ====================
+
     def _run_latex_diagnostics(self):
+        """Run LaTeX system diagnostics"""
         try:
             import shutil, platform, subprocess
             from matplotlib import __version__ as mpl_ver
@@ -519,6 +638,7 @@ class LatexWindow(tk.Toplevel):
             self._log(f"[diag] diagnostics failed: {e}")
 
 
+#End Latex Window
 # === Echo Engine ===
 class EchoEngine:
     """
@@ -1958,6 +2078,9 @@ class App:
         DEFAULT_MATH_PT = int(self.cfg.get("latex_math_pt", 8))
         DEFAULT_TEXT_FAMILY = self.cfg.get("latex_text_family", "Segoe UI")
 
+        DEFAULT_TEXT_PT = int(self.cfg.get("latex_text_pt", 12))
+        DEFAULT_MATH_PT = int(self.cfg.get("latex_math_pt", 8))
+        DEFAULT_TEXT_FAMILY = self.cfg.get("latex_text_family", "Segoe UI")
         self.latex_win_text = LatexWindow(
             self.master,
             log_fn=self.logln,
