@@ -1671,7 +1671,7 @@ class App:
         os.makedirs("out", exist_ok=True)
         purge_temp_images("out")
 
-
+        self._last_search_query = ""
         self.search_win = None
 
         # === NEW: Unified playback fencing ===
@@ -1874,21 +1874,31 @@ class App:
         self.master.grid_columnconfigure(1, weight=1)
         self.master.grid_columnconfigure(5, weight=1)
 
-        # LaTeX window
+        # MULTIPLE LaTeX windows for different contexts
+        self.latex_win_text = None  # Main text AI
+        self.latex_win_vision = None  # Vision AI
+        self.latex_win_search = None  # Search results
+        self.latex_win_weather = None  # Weather/other auto-searches
+
+        self._current_latex_context = "text"  # Track which window is active
+
+        # Create the main text window (keep existing behavior)
         DEFAULT_TEXT_PT = int(self.cfg.get("latex_text_pt", 12))
         DEFAULT_MATH_PT = int(self.cfg.get("latex_math_pt", 8))
         DEFAULT_TEXT_FAMILY = self.cfg.get("latex_text_family", "Segoe UI")
 
-        self.latex_win = LatexWindow(
+        self.latex_win_text = LatexWindow(
             self.master,
             log_fn=self.logln,
             text_family=DEFAULT_TEXT_FAMILY,
             text_size=DEFAULT_TEXT_PT,
             math_pt=DEFAULT_MATH_PT
         )
-
+        self.latex_win_text.title("Text AI - LaTeX Preview")  # Rename it
+        # TEMPORARY FIX: Keep old reference
+        self.latex_win = self.latex_win_text
         if self.latex_auto.get():
-            self.latex_win.show()
+            self.latex_win_text.show()
 
         # Capture the FIRST SAPI voice for vision
         self._sapi_default_voice_id = None
@@ -1911,11 +1921,7 @@ class App:
             self.cfg["whisper_device"],
             self.cfg["whisper_compute_type"],
             self.cfg["whisper_beam_size"]
-
         )
-
-
-
 
         import importlib, inspect, sys
         self.qwen = QwenLLM(
@@ -1924,36 +1930,51 @@ class App:
             temperature=self.cfg["qwen_temperature"],
             max_tokens=self.cfg["qwen_max_tokens"]
         )
-        # Give Qwen access to search functionality
+        # === CRITICAL: Connect main app to QwenLLM ===
         self.qwen.set_main_app(self)
-        self.qwen.set_search_handler(self.handle_ai_search_request)
+        self.logln(
+            f"[DEBUG] QwenLLM main_app connected: {hasattr(self.qwen, 'main_app') and self.qwen.main_app is not None}")
 
-        if hasattr(self.qwen, "model_path") and self.qwen.model_path:
-            self.logln(f"[qwen] ✅ Using local GGUF model: {self.qwen.model_path}")
-        elif hasattr(self.qwen, "model") and self.qwen.model:
-            self.logln(f"[qwen] ✅ Using Ollama model: {self.qwen.model}")
-        else:
-            self.logln("[qwen] ⚠️ Could not detect model name.")
+        # Also set search handler if the method exists
+        if hasattr(self.qwen, 'set_search_handler'):
+            self.qwen.set_search_handler(self.handle_ai_search_request)
+            self.logln("[DEBUG] Search handler connected")
 
-        # System prompt
+        # System prompt with REAL-TIME date awareness
         sys_prompt = (
                 self.cfg.get("system_prompt")
                 or self.cfg.get("qwen_system_prompt")
                 or ""
         )
-        self.qwen.system_prompt = sys_prompt
-        self.logln(f"[qwen] system prompt (first 80): {sys_prompt[:80]!r}")
-        # ADD THIS: Include current date AND time in system prompt
+
+        # Create a dynamic system prompt that explains the AI has real-time awareness
         from datetime import datetime
         current_datetime = datetime.now()
         current_date = current_datetime.strftime("%B %d, %Y")
-        current_time = current_datetime.strftime("%I:%M %p")  # e.g., "02:30 PM"
+        current_time = current_datetime.strftime("%I:%M %p")
+        current_day = current_datetime.strftime("%A")
 
-        date_time_aware_prompt = f"{sys_prompt}\n\nCurrent date and time: {current_date} at {current_time}. Always use this date and time when answering questions about time."
+        enhanced_system_prompt = f"""{sys_prompt}
 
-        self.qwen.system_prompt = date_time_aware_prompt
-        self.logln(f"[qwen] system prompt with current datetime: {current_date} at {current_time}")
+    IMPORTANT: You have access to real-time information. The current date and time is:
+    - Date: {current_date} ({current_day})
+    - Time: {current_time}
 
+    You MUST use this current date and time when answering questions about:
+    - Today's date, current time, day of the week
+    - Scheduling, appointments, time-sensitive information
+    - Historical references relative to today
+    - Time-based calculations
+
+    Do NOT say you need to search for the current date/time. You already know it.
+    If asked about the date or time, provide the information directly: "Today is {current_date} and the time is {current_time}."
+
+    For future or past dates relative to today, you can calculate based on this reference point.
+    """
+
+        self.qwen.system_prompt = enhanced_system_prompt
+        self.logln(f"[qwen] ✅ System prompt updated with real-time awareness")
+        self.logln(f"[qwen] 📅 Current date in system: {current_date} at {current_time}")
 
     def _apply_config_defaults(self):
         """Apply configuration defaults to UI"""
@@ -2152,42 +2173,48 @@ class App:
     # === FIXED: handle_text_query ===
     def handle_text_query(self, text):
         self.logln(f"[user] {text}")
-        self.preview_latex(text)
         self._sync_image_context_from_window()
 
         # Route camera/image commands first
         if self._route_command(text):
+            self.logln(f"[DEBUG] Command routed, returning early")
             return
-
-        # In handle_text_query and loop methods, replace the vision routing section with:
 
         # Route the user question to appropriate model
         try:
             use_vision = self._should_use_vision_followup(text)
+            self.logln(f"[DEBUG] use_vision: {use_vision}")
 
             if use_vision:
                 self.logln(f"[vision] follow-up → reuse last image (turns left: {self._vision_turns_left})")
                 reply = self._ollama_generate_with_retry(text, images=[self._last_image_path])
                 # Only decrement AFTER successful generation
                 self._update_vision_state(used_turn=True)
-                self._last_was_vision = True  # Ensure this stays True
+                self._last_was_vision = True
+                # PREVIEW VISION RESPONSE
+                self.preview_latex(reply, context="vision")
             else:
-                # normal text model path
-                # Use search-enhanced generation
-                reply = self.qwen.generate_with_search(text)  # ← THIS SHOULD BE CORRECT
+                # normal text model path - use search-enhanced generation
+                if hasattr(self.qwen, 'generate_with_search'):
+                    reply = self.qwen.generate_with_search(text)
+                else:
+                    reply = self.qwen.generate(text)
+
+                # PREVIEW TEXT RESPONSE
+                self.preview_latex(reply, context="text")
 
                 # Only reset if we're definitely not in a vision context
-                if not self._should_use_vision_followup("dummy"):  # Check if context expired
+                if not self._should_use_vision_followup("dummy"):
                     self._update_vision_state(reset=True)
 
         except Exception as e:
             self.logln(f"[llm/vision] {e}\n[hint] Is Ollama running?  ollama serve")
             self.set_light("idle")
             return
-        self.logln(f"[qwen] {reply}")
-        self.preview_latex(reply)
-        self._set_last_vision_reply(reply)
 
+        self.logln(f"[qwen] {reply}")
+
+        self._set_last_vision_reply(reply)
         clean = clean_for_tts(reply)
 
         # unified playback fencing
@@ -2203,7 +2230,13 @@ class App:
 
         try:
             if self.synthesize_to_wav(clean, self.cfg["out_wav"], role=role):
-                self.master.after(0, self.latex_win._prepare_word_spans)
+                # Use the appropriate window for highlighting
+                if use_vision:
+                    target_win = self.ensure_latex_window("vision")
+                else:
+                    target_win = self.ensure_latex_window("text")
+
+                self.master.after(0, target_win._prepare_word_spans)
                 play_path = self.cfg["out_wav"]
                 if bool(self.echo_enabled_var.get()):
                     try:
@@ -2218,6 +2251,10 @@ class App:
             self.set_light("idle")
             self._latex_theme("default")
 
+
+            #end query
+
+
     # === FIXED: ask_vision ===
     def ask_vision(self, image_path: str, prompt: str):
         """Called by ImageWindow when the user presses 'Ask model'."""
@@ -2228,14 +2265,14 @@ class App:
         def _worker():
             try:
                 self.logln(f"[vision] {os.path.basename(image_path)} | prompt: {prompt}")
-                self.preview_latex(prompt)
+                self.preview_latex(prompt, context="vision")
                 reply = self._ollama_generate_with_retry(prompt, images=[image_path])
 
                 # FIXED: Use unified state management
                 self._update_vision_state(used_turn=True)
 
                 self.logln(f"[qwen] {reply}")
-                self.preview_latex(reply)
+                self.preview_latex(reply, context="vision")  # <-- UNCOMMENTED
 
                 # IMPORTANT: Set the vision reply BEFORE any playback starts
                 self._set_last_vision_reply(reply)
@@ -2253,7 +2290,9 @@ class App:
 
                 try:
                     if self.synthesize_to_wav(clean, self.cfg["out_wav"], role="vision"):
-                        self.master.after(0, self.latex_win._prepare_word_spans)
+                        # Use VISION window for highlighting
+                        vision_win = self.ensure_latex_window("vision")
+                        self.master.after(0, vision_win._prepare_word_spans)
                         play_path = self.cfg["out_wav"]
                         if bool(self.echo_enabled_var.get()):
                             try:
@@ -2279,6 +2318,8 @@ class App:
         Handle search requests from the AI using the existing web search system
         Returns search results as text that the AI can use
         """
+
+        self._last_search_query = search_query
         self.logln(f"[AI Search] Query: {search_query}")
 
         try:
@@ -2294,7 +2335,7 @@ class App:
                         # Use your existing text extraction
                         text = self.extract_readable(html, item.url)
                         if len(text) > 400:  # Only summarize if we got substantial content
-                            # USE THE NEW NEWS-FOCUSED SUMMARIZATION
+                            # USE THE ENHANCED SUMMARIZATION (NOW WITH QUERY CONTEXT)
                             summary = self.summarise_for_ai_search(text[:12000], item.url, None)
                             search_summary += f"## Result {i}: {item.title}\n"
                             search_summary += f"URL: {item.url}\n"
@@ -2317,7 +2358,6 @@ class App:
 
         except Exception as e:
             return f"Search failed: {str(e)}"
-
 
     def _process_ai_response(self, response: str, from_search_method: bool = False) -> str:
         """
@@ -2522,6 +2562,49 @@ class App:
             self.logln(f"[send-to-text] traceback: {traceback.format_exc()}")
 
     # === Core Application Methods ===
+    def ensure_latex_window(self, context="text"):
+        """Get or create the appropriate LaTeX window for each context"""
+        if context == "text":
+            if self.latex_win_text is None or not self.latex_win_text.winfo_exists():
+                DEFAULT_TEXT_PT = int(self.cfg.get("latex_text_pt", 12))
+                DEFAULT_MATH_PT = int(self.cfg.get("latex_math_pt", 8))
+                DEFAULT_TEXT_FAMILY = self.cfg.get("latex_text_family", "Segoe UI")
+
+                self.latex_win_text = LatexWindow(
+                    self.master, log_fn=self.logln,
+                    text_family=DEFAULT_TEXT_FAMILY, text_size=DEFAULT_TEXT_PT, math_pt=DEFAULT_MATH_PT
+                )
+                self.latex_win_text.title("Text AI - LaTeX Preview")
+            return self.latex_win_text
+
+        elif context == "vision":
+            if self.latex_win_vision is None or not self.latex_win_vision.winfo_exists():
+                DEFAULT_TEXT_PT = int(self.cfg.get("latex_text_pt", 12))
+                DEFAULT_MATH_PT = int(self.cfg.get("latex_math_pt", 8))
+                DEFAULT_TEXT_FAMILY = self.cfg.get("latex_text_family", "Segoe UI")
+
+                self.latex_win_vision = LatexWindow(
+                    self.master, log_fn=self.logln,
+                    text_family=DEFAULT_TEXT_FAMILY, text_size=DEFAULT_TEXT_PT, math_pt=DEFAULT_MATH_PT
+                )
+                self.latex_win_vision.title("Vision AI - LaTeX Preview")
+                self.latex_win_vision.set_scheme("vision")  # Blue theme
+            return self.latex_win_vision
+
+        elif context == "search":
+            if self.latex_win_search is None or not self.latex_win_search.winfo_exists():
+                DEFAULT_TEXT_PT = int(self.cfg.get("latex_text_pt", 12))
+                DEFAULT_MATH_PT = int(self.cfg.get("latex_math_pt", 8))
+                DEFAULT_TEXT_FAMILY = self.cfg.get("latex_text_family", "Segoe UI")
+
+                self.latex_win_search = LatexWindow(
+                    self.master, log_fn=self.logln,
+                    text_family=DEFAULT_TEXT_FAMILY, text_size=DEFAULT_TEXT_PT, math_pt=DEFAULT_MATH_PT
+                )
+                self.latex_win_search.title("Search Results - LaTeX Preview")
+            return self.latex_win_search
+
+
     def start(self):
         if self.running: return
         self.running = True
@@ -2627,7 +2710,6 @@ class App:
 
         except Exception as e:
             self.logln(f"[vision] 'what do you see' error: {e}")
-
 
     def loop(self):
         dev_choice = self.dev_combo.get()
@@ -2740,7 +2822,7 @@ class App:
                 else:
                     # normal text model path
                     # Use search-enhanced generation
-                    reply = self.qwen.generate_with_search(text)  # ← THIS SHOULD ALREADY BE CORRECT
+                    reply = self.qwen.generate_with_search(text)
 
                     # Only reset if we're definitely not in a vision context
                     if not self._should_use_vision_followup("dummy"):  # Check if context expired
@@ -2750,13 +2832,10 @@ class App:
                 self.logln(f"[llm/vision] {e}\n[hint] Is Ollama running?  ollama serve")
                 self.set_light("idle")
                 continue
-            except Exception as e:
-                self.logln(f"[llm/vision] {e}\n[hint] Is Ollama running?  ollama serve")
-                self.set_light("idle")
-                continue
 
             self.logln(f"[qwen] {reply}")
-            self.preview_latex(reply)
+            # PREVIEW THE RESPONSE FOR VOICE QUERIES
+            self.preview_latex(reply, context="text")
 
             clean = clean_for_tts(reply)
             self.speaking_flag = True
@@ -2781,10 +2860,16 @@ class App:
                 self.speaking_flag = False
                 self.interrupt_flag = False
                 self.set_light("idle")
-                self._chime_played = False
-                self._beep_once_guard = False
-                self._latex_theme("default")
+
+                # Only reset theme if we were using vision theme
+                if role == "vision":
+                    self._latex_theme("default")
+
+                # Don't reset listen prompt variables here
+                # self._chime_played = False  # This is for listen prompt
+                # self._beep_once_guard = False  # This is for listen prompt
         self.stop()
+
 
     # === Voice/Audio Methods ===
     def start_bargein_mic(self, device_idx):
@@ -3245,6 +3330,29 @@ class App:
                     cmd_words = cmd.split()
                     if len(words) > len(cmd_words):
                         query = " ".join(words[len(cmd_words):])
+
+                # === ADD DATE ENHANCEMENT FOR FLIGHT QUERIES ===
+                if any(flight_word in query.lower() for flight_word in ['flight', 'fly', 'airline', 'airfare']):
+                    from datetime import datetime, timedelta
+                    today = datetime.now()
+
+                    # Handle "next monday" type queries
+                    if "next monday" in query.lower():
+                        days_ahead = 7 - today.weekday()  # Monday is 0
+                        if days_ahead <= 0:  # If today is Monday or after
+                            days_ahead += 7
+                        next_monday = today + timedelta(days=days_ahead)
+                        query += f" {next_monday.strftime('%Y-%m-%d')}"
+                        self.logln(f"[search] Enhanced flight query with date: {next_monday.strftime('%Y-%m-%d')}")
+
+                    # Add current year if not present and looks like a date-based flight query
+                    current_year = today.year
+                    if str(current_year) not in query and any(word in query.lower() for word in
+                                                              ['january', 'february', 'march', 'april', 'may', 'june',
+                                                               'july', 'august', 'september', 'october', 'november',
+                                                               'december']):
+                        query += f" {current_year}"
+                        self.logln(f"[search] Enhanced flight query with year: {current_year}")
 
                 if query:
                     self.logln(f"[search] Voice search: {query}")
@@ -3912,25 +4020,38 @@ class App:
 
         threading.Thread(target=self.handle_text_query, args=(text,), daemon=True).start()
 
-    def preview_latex(self, content: str):
+    def preview_latex(self, content: str, context="text"):
+        """Preview LaTeX content in the appropriate window"""
         if not self.latex_auto.get():
             return
 
         def _go():
             try:
-                self.latex_win.show()
-                self.latex_win.show_document(content)
+                latex_win = self.ensure_latex_window(context)
+                latex_win.show()
+                latex_win.show_document(content)
+                self._current_latex_context = context
+                self.logln(f"[latex] Showing in {context} window")
             except Exception as e:
-                self.logln(f"[latex] preview error: {e}")
+                self.logln(f"[latex] preview error ({context}): {e}")
 
         self.master.after(0, _go)
 
+    def preview_search_results(self, content: str):
+        """Special method for search results that preserves the display"""
+        self.preview_latex(content, context="search")
+
     def _latex_theme(self, mode: str):
         try:
-            if hasattr(self, "latex_win"):
-                self.latex_win.set_scheme("vision" if mode == "vision" else "default")
+            # Set theme on the appropriate window
+            if mode == "vision" and hasattr(self, "latex_win_vision"):
+                self.latex_win_vision.set_scheme("vision")
+            elif hasattr(self, "latex_win_text"):
+                self.latex_win_text.set_scheme("default")
         except Exception:
             pass
+
+
 
     def synthesize_to_wav(self, text, out_wav, role="text"):
         import time
@@ -4240,49 +4361,160 @@ class App:
         return urls
 
     def summarise_for_ai_search(self, text: str, url: str, pubdate: str):
-        """Enhanced detailed summarization for AI-triggered searches"""
-        text = text[:18000]  # More text for better context
+        """Enhanced summarization that preserves practical information"""
+        text = text[:18000]
 
         # Enhanced date context
         if pubdate:
             date_context = f"PUBLICATION DATE: {pubdate}\n"
         else:
-            # Try to extract approximate date from content
             import re
             date_matches = re.findall(
                 r'\b(?:20\d{2}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* 20\d{2})\b',
                 text[:3000])
             date_context = f"MENTIONED DATES: {', '.join(date_matches[:3])}\n" if date_matches else ""
 
-        # ENHANCED PROMPT for more detailed, structured summaries
-        summary_prompt = (
-            "Create a COMPREHENSIVE but concise summary with the following structure:\n\n"
-            "## MAIN HEADLINES\n"
-            "- List 3-5 most important headlines with key details\n\n"
-            "## KEY FACTS & FIGURES\n"
-            "- Include specific numbers, dates, locations, names\n"
-            "- Quantitative data: amounts, percentages, statistics\n"
-            "- Timeframes and durations\n\n"
-            "## RECENT DEVELOPMENTS\n"
-            "- Latest updates and breaking news\n"
-            "- Recent changes or announcements\n"
-            "- Ongoing investigations or proceedings\n\n"
-            "## CONTEXT & BACKGROUND\n"
-            "- Brief relevant background if needed\n"
-            "- Connections to previous events\n\n"
-            "CRITICAL: Be SPECIFIC with names, numbers, dates, and locations. Avoid generic statements.\n"
-            f"{date_context}"
-            f"Source: {url}\n\nCONTENT TO SUMMARIZE:\n{text}"
-        )
+        # DETECT QUERY TYPE AND ADAPT SUMMARIZATION
+        query_lower = getattr(self, '_last_search_query', '').lower()
+
+        # Flight/travel related queries
+        if any(keyword in query_lower for keyword in ['flight', 'fly', 'airline', 'airport', 'travel to']):
+            summary_prompt = (
+                "Extract COMPLETE flight information with these details:\n\n"
+                "## FLIGHT INFORMATION\n"
+                "- Airline names and flight numbers\n"
+                "- Departure and arrival airports (with codes if available)\n"
+                "- Departure and arrival times/dates\n"
+                "- Flight duration\n"
+                "- Prices and fare classes\n"
+                "- Stopovers/layovers\n"
+                "- Booking links or airline websites\n\n"
+                "## TRAVEL DETAILS\n"
+                "- Airport locations and terminals\n"
+                "- Booking requirements\n"
+                "- Baggage information\n"
+                "- Recent deals or promotions\n\n"
+                "Include ALL specific numbers, times, prices, and codes. Be very detailed about schedules and availability.\n"
+                f"{date_context}"
+                f"Source: {url}\n\nCONTENT TO SUMMARIZE:\n{text}"
+            )
+
+        # Business/location queries
+        elif any(keyword in query_lower for keyword in
+                 ['address', 'location', 'where is', 'hours', 'contact', 'phone', 'email']):
+            summary_prompt = (
+                "EXTRACT ONLY INFORMATION EXPLICITLY STATED IN THE TEXT. NEVER CREATE PLACEHOLDERS OR INVENT INFORMATION.\n\n"
+                "CRITICAL RULES:\n"
+                "1. ONLY include information that appears VERBATIM in the source text\n"
+                "2. NEVER use brackets [ ], parentheses ( ), or placeholder text\n"
+                "3. If a website is mentioned, copy the EXACT URL\n"
+                "4. If information is missing, OMIT that line entirely\n"
+                "5. Do NOT create template responses\n\n"
+                "EXTRACTED INFORMATION (ONLY IF FOUND):\n"
+                "- Business Name: [copy exact name if found]\n"
+                "- Address: [copy exact address if found]\n"
+                "- Phone: [copy exact phone number if found]\n"
+                "- Email: [copy exact email if found]\n"
+                "- Website: [copy exact URL if found]\n"
+                "- Hours: [copy exact hours if found]\n\n"
+                "EXAMPLES - WRONG:\n"
+                "❌ Address: [Address may vary]\n"
+                "❌ Phone: [Phone number may vary]  \n"
+                "❌ Website: [Website Link]\n"
+                "❌ Website: [Website URL if available]\n\n"
+                "EXAMPLES - CORRECT:\n"
+                "✅ Address: 456 Northshore Road, Unit 2, Glenfield 0678\n"
+                "✅ Phone: +64 9 483 5555\n"
+                "✅ Website: https://www.serenityspa.co.nz\n"
+                "✅ Website: www.serenityspa.com\n"
+                "✅ (omit Website line if no URL found)\n\n"
+                "If the text contains '456 Glenfield Road, Unit 2, Glenfield 0678' and '+64 9 483 5555' but NO website, output:\n"
+                "Address: 456 Glenfield Road, Unit 2, Glenfield 0678\n"
+                "Phone: +64 9 483 5555\n\n"
+                "DO NOT INVENT WEBSITE INFORMATION. If no website is found, omit the Website line completely.\n"
+                f"{date_context}"
+                f"Source: {url}\n\nCONTENT TO SUMMARIZE:\n{text}"
+            )
+
+
+        # Product/service queries
+        elif any(keyword in query_lower for keyword in ['price', 'cost', 'buy', 'purchase', 'deal', 'sale']):
+            summary_prompt = (
+                "Extract COMPLETE product/service information:\n\n"
+                "## PRICING & AVAILABILITY\n"
+                "- Exact prices and currency\n"
+                "- Model numbers/specifications\n"
+                "- Availability status\n"
+                "- Seller/retailer information\n"
+                "- Shipping costs and delivery times\n"
+                "- Return policies\n\n"
+                "## PRODUCT DETAILS\n"
+                "- Features and specifications\n"
+                "- Dimensions/sizes\n"
+                "- Colors/options available\n"
+                "- Warranty information\n\n"
+                "Include ALL pricing, specifications, and purchase details. Be very specific about numbers and options.\n"
+                f"{date_context}"
+                f"Source: {url}\n\nCONTENT TO SUMMARIZE:\n{text}"
+            )
+
+        # Weather queries
+        elif any(keyword in query_lower for keyword in
+                 ['weather', 'forecast', 'temperature', 'rain', 'snow', 'humidity']):
+            summary_prompt = (
+                "Extract COMPLETE weather forecast information:\n\n"
+                "## CURRENT CONDITIONS\n"
+                "- Temperature and feels-like temperature\n"
+                "- Weather description (sunny, rainy, etc.)\n"
+                "- Humidity, wind speed and direction\n"
+                "- Precipitation chances\n"
+                "- Air quality and UV index\n\n"
+                "## FORECAST\n"
+                "- Hourly and daily forecasts\n"
+                "- High/low temperatures\n"
+                "- Severe weather alerts\n"
+                "- Sunrise/sunset times\n\n"
+                "## LOCATION DETAILS\n"
+                "- Specific city/region\n"
+                "- Geographic details if available\n"
+                "- Timezone information\n\n"
+                "Include ALL numerical weather data, times, and location specifics.\n"
+                f"{date_context}"
+                f"Source: {url}\n\nCONTENT TO SUMMARIZE:\n{text}"
+            )
+
+        else:
+            # General comprehensive summary (for news, general info, etc.)
+            summary_prompt = (
+                "Create a COMPREHENSIVE summary that PRESERVES practical information:\n\n"
+                "## ESSENTIAL DETAILS\n"
+                "- Full names of businesses, people, organizations\n"
+                "- Complete addresses, phone numbers, contact information\n"
+                "- Prices, costs, financial figures\n"
+                "- Dates, times, schedules\n"
+                "- Locations, coordinates, directions\n"
+                "- Website URLs, email addresses\n\n"
+                "## KEY INFORMATION\n"
+                "- Main facts and findings\n"
+                "- Important numbers and statistics\n"
+                "- Recent developments\n"
+                "- Contact methods\n\n"
+                "## ADDITIONAL CONTEXT\n"
+                "- Background information\n"
+                "- Related services or options\n"
+                "- User reviews or ratings if available\n\n"
+                "CRITICAL: NEVER omit addresses, phone numbers, prices, or contact information. Include them verbatim.\n"
+                f"{date_context}"
+                f"Source: {url}\n\nCONTENT TO SUMMARIZE:\n{text}"
+            )
 
         try:
-            # Allow more tokens for detailed responses
             payload = {
                 "model": "qwen2.5:7b-instruct",
                 "prompt": summary_prompt,
                 "stream": False,
-                "temperature": 0.2,  # Slightly higher for better phrasing
-                "max_tokens": 800  # More tokens for comprehensive summaries
+                "temperature": 0.1,  # Lower temperature for more factual accuracy
+                "max_tokens": 1200  # More tokens for detailed information
             }
 
             with httpx.Client(timeout=75.0) as client:
@@ -4290,17 +4522,126 @@ class App:
                 r.raise_for_status()
                 response = r.json().get("response", "").strip()
 
-                # Enhanced fallback for generic responses
-                if (len(response) < 150 or
-                        "unfortunately" in response.lower() or
-                        "no content" in response.lower() or
-                        "could not find" in response.lower()):
-                    return self._extract_detailed_news(text[:10000])
+                # Enhanced fallback for better information extraction
+                if len(response) < 100 or "no information" in response.lower():
+                    return self._extract_practical_information(text[:12000], query_lower)
 
                 return response
 
         except Exception as e:
-            return self._extract_detailed_news(text[:8000])
+            return self._extract_practical_information(text[:10000], query_lower)
+
+    def _extract_practical_information(self, text: str, query_type: str) -> str:
+        """Enhanced fallback extraction focusing on practical information"""
+        import re
+
+        sections = []
+
+        # Enhanced address extraction
+        address_patterns = [
+            # Standard street addresses
+            r'\b\d+\s+[A-Za-z0-9\s,]+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct|Place|Pl|Way|Highway|Hwy)\.?\s*(?:#\s*\d+)?\s*,\s*[A-Za-z\s]+,\s*[A-Z]{2}\s*\d{5}(?:-\d{4})?\b',
+            # Basic address format
+            r'\b\d+\s+[\w\s]+\s+(?:St|Street|Ave|Avenue|Rd|Road|Blvd|Boulevard|Dr|Drive|Ln|Lane|Ct|Court),\s*[\w\s]+,\s*[A-Z]{2}\b',
+            # PO Boxes
+            r'\b(?:P\.?O\.?\s*Box|PO Box|P O Box)\s+\d+[^.!?]*',
+        ]
+
+        addresses = []
+        for pattern in address_patterns:
+            found = re.findall(pattern, text, re.IGNORECASE)
+            addresses.extend(found)
+
+        # Filter out obviously fake or placeholder addresses
+        real_addresses = []
+        for addr in addresses:
+            addr_lower = addr.lower()
+            # Skip placeholder text
+            if any(placeholder in addr_lower for placeholder in
+                   ['address may vary', 'varies', 'please contact', 'call for', 'not available']):
+                continue
+            # Skip if it's just a city/state without street
+            if re.match(r'^[A-Za-z\s]+,?\s*[A-Z]{2}\s*\d{5}', addr) and not re.search(r'\d+', addr):
+                continue
+            real_addresses.append(addr.strip())
+
+        if real_addresses:
+            sections.append("## ADDRESSES FOUND")
+            sections.extend([f"- {addr}" for addr in set(real_addresses)[:3]])
+        # Extract website URLs (more comprehensive)
+        url_patterns = [
+            r'https?://[^\s<>"{}|\\^`\[\]]+',
+            r'www\.[^\s<>"{}|\\^`\[\]]+\.[a-z]{2,}',
+            r'[a-z0-9.-]+\.[a-z]{2,}/[^\s<>"{}|\\^`\[\]]*',
+        ]
+
+        urls = []
+        for pattern in url_patterns:
+            urls.extend(re.findall(pattern, text, re.IGNORECASE))
+
+        # Filter and clean URLs
+        clean_urls = []
+        for url in urls:
+            # Remove trailing punctuation
+            url = re.sub(r'[.,;:!?)]+$', '', url)
+            # Skip common false positives
+            if any(bad in url.lower() for bad in ['example.com', 'website.com', 'yourwebsite', 'domain.com']):
+                continue
+            # Ensure it looks like a real URL
+            if '.' in url and len(url) > 8:
+                # Add http:// if missing for www URLs
+                if url.startswith('www.') and not url.startswith('http'):
+                    url = 'https://' + url
+                clean_urls.append(url)
+
+        if clean_urls:
+            sections.append("\n## WEBSITES")
+            sections.extend([f"- {url}" for url in set(clean_urls)[:3]])
+
+        # Extract phone numbers
+        phone_pattern = r'(\+?\d{1,2}?[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})'
+        phones = re.findall(phone_pattern, text)
+        if phones:
+            sections.append(f"\n## PHONE NUMBERS: {', '.join(set(phones)[:3])}")
+
+        # Extract email addresses
+        emails = re.findall(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', text)
+        if emails:
+            sections.append(f"\n## EMAIL ADDRESSES: {', '.join(set(emails)[:3])}")
+
+        # Extract prices and costs
+        prices = re.findall(r'\$?\d+(?:,\d+)*(?:\.\d+)?\s*(?:dollars?|USD|€|£|¥)?', text)
+        if prices:
+            sections.append(f"\n## PRICES MENTIONED: {', '.join(set(prices)[:8])}")
+
+        # Flight-specific extraction
+        if 'flight' in query_type:
+            flight_info = re.findall(r'[A-Z]{2}\d+\s+.*?(?:\d{1,2}:\d{2}|AM|PM)', text)
+            if flight_info:
+                sections.append("\n## FLIGHT DETAILS")
+                sections.extend([f"- {info}" for info in flight_info[:5]])
+
+        # Business hours
+        hours = re.findall(
+            r'(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*.*?\d{1,2}:\d{2}\s*(?:AM|PM)?.*?\d{1,2}:\d{2}\s*(?:AM|PM)?', text,
+            re.IGNORECASE)
+        if hours:
+            sections.append("\n## BUSINESS HOURS")
+            sections.extend([f"- {hour}" for hour in hours[:3]])
+
+        # Weather data extraction
+        if 'weather' in query_type:
+            temps = re.findall(r'\b\d{1,3}°?F?\b', text)
+            if temps:
+                sections.append(f"\n## TEMPERATURES: {', '.join(set(temps)[:6])}")
+
+        # If we found practical information, return it
+        if sections:
+            return "\n".join(sections)
+        else:
+            # Return meaningful content lines as fallback
+            lines = [line.strip() for line in text.split('\n') if len(line.strip()) > 30]
+            return "## KEY INFORMATION EXTRACTED\n" + "\n".join([f"- {line}" for line in lines[:10]])
 
     def _extract_detailed_news(self, text: str) -> str:
         """Enhanced fallback extraction with more structure"""
@@ -4354,7 +4695,6 @@ class App:
             lines = text.split('\n')
             meaningful_lines = [line.strip() for line in lines if len(line.strip()) > 40][:8]
             return "## CONTENT OVERVIEW\n" + "\n".join([f"- {line}" for line in meaningful_lines])
-
 
 
 
@@ -4456,27 +4796,22 @@ class App:
                 break
         return urls
 
-
-
-
     def synthesize_search_results(self, text: str):
-        """Speak search results using proper interruptible playback"""
+        """Speak search results using DEDICATED search window"""
 
         def _tts_worker():
             if not text or not text.strip():
                 return
 
             try:
-                # Clean text for TTS - USE THE EXACT SAME CLEANING AS CHAT
-                clean_tts_text = clean_for_tts(text)  # ← Same as chat!
+                # === CRITICAL: Use DEDICATED search window ===
+                self.preview_search_results(text)
 
-                # Generate speech file
+                # Continue with TTS...
+                clean_tts_text = clean_for_tts(text)
                 output_path = "out/search_results.wav"
 
-                # DIRECT CALL to synthesize_to_wav - no voice switching needed
-                # Since synthesize_to_wav already reads self.sapi_voice_var.get()
                 if self.synthesize_to_wav(clean_tts_text, output_path, role="text"):
-                    # Use the EXACT SAME playback logic as main TTS
                     with self._play_lock:
                         self._play_token += 1
                         my_token = self._play_token
@@ -4485,7 +4820,6 @@ class App:
 
                     self.set_light("speaking")
 
-                    # Apply echo using the same pattern as main TTS
                     play_path = output_path
                     if bool(self.echo_enabled_var.get()):
                         try:
@@ -4503,10 +4837,11 @@ class App:
                 self.interrupt_flag = False
                 self.set_light("idle")
 
-        # Start TTS in a separate thread - NO VOICE CAPTURE NEEDED
-        # synthesize_to_wav will read the current voice selection automatically
         tts_thread = threading.Thread(target=_tts_worker, daemon=True)
         tts_thread.start()
+
+
+
 
 #End syththesise_search
 
