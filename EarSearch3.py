@@ -26,9 +26,8 @@ from io import BytesIO
 from PIL import Image, ImageTk
 import matplotlib
 # This uses two models and a different Json file and handles images as well
-# You will need two models as per the Json file loaded into ollama
-#can read equations off paper and handwriting
-#Can also do web searches
+#Look for the Json file  called Json2. You will need two models as per the Json file loaded into ollama
+#can read equations off paper and handwriting. Uses qwen_llmSearch2.py
 matplotlib.rcParams["figure.max_open_warning"] = 0
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -76,7 +75,7 @@ except Exception:
 # External modules you provide
 from audio_io import list_input_devices, VADListener
 from asr_whisper import ASR
-from qwen_llmSearch import QwenLLM
+from qwen_llmSearch2 import QwenLLM
 from pydub import AudioSegment
 
 # ===  ITEM DATACLASS ===
@@ -133,7 +132,7 @@ def clean_for_tts(text: str) -> str:
         flags=re.DOTALL | re.IGNORECASE,
     )
     text = math_pat.sub(" equation ", text)
-    text = re.sub(r"[#*_`~>\[\]\(\)]", "", text)
+    text = re.sub(r"[#*_`~>\[\]\(\)-]", "", text)  # Added hyphen/dash here
     text = re.sub(r":[a-z_]+:", "", text)
     text = re.sub(r"^[QAqa]:\s*", "", text)
     text = re.sub(r"\s{2,}", " ", text)
@@ -855,49 +854,118 @@ class RectAvatarWindow(tk.Toplevel):
             alive.append(p)
         self._particles = alive
 
+
+
 class RectAvatarWindow2(RectAvatarWindow):
     """
-    Rectangles 2: same particle system as RectAvatarWindow,
-    but each spawned rectangle is randomly vertical with probability VERTICAL_PROPORTION.
+    Rectangles (circular window):
+    - Inherits modulation: call self.avatar.set_level(level) from your WAV timer.
+    - Window is circular via transparent mask (keeps bars inside the circle).
+    - Spawns within a radius, clips bars to the circle chord, gentle center pull.
     """
-    VERTICAL_PROPORTION = 0.35  # 35% vertical (long in Y, thin in X)
+
+    # --- circular-window specifics / tunables ---
+    CIRCLE_DIAM = 900  # window diameter in px
+    MASK_COLOR = "#00FF00"  # transparent chroma-key color
+    EDGE_INSET_F = 1.00  # 1.0 hugs chord; <1.0 keeps a gap
+    SPAWN_RADIUS_F = 0.90  # 0..1 (smaller => more central spawn)
+    CENTER_PULL = 0.07  # 0.. (per-second pull toward center)
+    VERTICAL_PROPORTION = 0.40  # share of vertical bars
 
     def __init__(self, master):
+        # build the base window + canvas
         super().__init__(master)
-        self.title("Avatar — Rectangles 2 (vertical mix)")
+        self.title("Avatar — Rectangles (circle)")
+        # make the toplevel circular via transparent color
+        try:
+            self.overrideredirect(True)
+            self.wm_attributes("-transparentcolor", self.MASK_COLOR)
+            # background to mask color so corners go transparent
+            self.configure(bg=self.MASK_COLOR)
+            self.canvas.configure(bg=self.MASK_COLOR)
+        except Exception:
+            # if unsupported, window stays rectangular
+            pass
 
-    def _spawn(self, n):
+        # size + center on screen
+        try:
+            self.geometry(f"{self.CIRCLE_DIAM}x{self.CIRCLE_DIAM}")
+            sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+            x = max(0, (sw - self.CIRCLE_DIAM) // 2)
+            y = max(0, (sh - self.CIRCLE_DIAM) // 2)
+            self.geometry(f"{self.CIRCLE_DIAM}x{self.CIRCLE_DIAM}+{x}+{y}")
+        except Exception:
+            pass
+
+        # simple drag-to-move (no title bar)
+        self._drag = {"x": 0, "y": 0}
+        self.bind("<Button-1>", self._start_drag)
+        self.bind("<B1-Motion>", self._do_drag)
+
+    # ----- drag helpers -----
+    def _start_drag(self, e):
+        self._drag["x"], self._drag["y"] = e.x_root - self.winfo_x(), e.y_root - self.winfo_y()
+
+    def _do_drag(self, e):
+        self.geometry(f"+{e.x_root - self._drag['x']}+{e.y_root - self._drag['y']}")
+
+    # ----- circle geometry / sampling -----
+    def _circle_geom(self):
         cw = max(1, self.canvas.winfo_width())
         ch = max(1, self.canvas.winfo_height())
-        if cw <= 2*self.pad or ch <= 2*self.pad:
+        cx, cy = cw // 2, ch // 2
+        r = max(1, min(cw, ch) // 2 - self.pad)
+        return cx, cy, r
+
+    def _uniform_point_in_disc(self, cx, cy, r):
+        # sample uniformly within SPAWN_RADIUS_F * r
+        inner_r = max(2, r * float(self.SPAWN_RADIUS_F))
+        u = np.random.random()
+        theta = 2 * np.pi * np.random.random()
+        rho = inner_r * np.sqrt(u)
+        return int(cx + rho * np.cos(theta)), int(cy + rho * np.sin(theta))
+
+    # ----- spawn override: inside circle + chord clipping + vertical mix -----
+    def _spawn(self, n):
+        cx, cy, r = self._circle_geom()
+        if r <= 4:
             return
 
-        # Horizontal sizing (length along X, thickness along Y)
-        min_len_h = max(6, int(cw * self.RECT_MIN_LEN_F))
-        max_len_h = max(min_len_h + 4, int(cw * self.RECT_MAX_LEN_F))
-        thick_h   = max(3, int(ch * self.RECT_THICK_F))
+        d = 2 * r  # circle diameter used for length scaling
 
-        # Vertical sizing (length along Y, thickness along X)
-        min_len_v = max(6, int(ch * self.RECT_MIN_LEN_F))
-        max_len_v = max(min_len_v + 4, int(ch * self.RECT_MAX_LEN_F))
-        thick_v   = max(3, int(cw * self.RECT_THICK_F))
+        # base sizes from parent tunables (bigger bars but still compact)
+        min_len_h = max(6, int(d * (self.RECT_MIN_LEN_F * 1.00)))
+        max_len_h = max(min_len_h + 2, int(d * (self.RECT_MAX_LEN_F * 1.00)))
+        min_len_v = min_len_h
+        max_len_v = max_len_h
 
-        drift_p = max(1, int(min(cw, ch) * self.DRIFT_PIX_F))
+        # thickness based on radius
+        thick = max(3, int(r * (self.RECT_THICK_F * 1.00)))
+        thick_h = thick
+        thick_v = thick
+
+        # drift scaled by radius (reuse parent drift factor)
+        drift_p = max(1, int(r * self.DRIFT_PIX_F))
         now = time.perf_counter()
 
         for _ in range(n):
-            cx = np.random.randint(self.pad, cw - self.pad)
-            cy = np.random.randint(self.pad, ch - self.pad)
-
+            x0, y0 = self._uniform_point_in_disc(cx, cy, r)
             vertical = (np.random.random() < self.VERTICAL_PROPORTION)
+
             if vertical:
-                L  = np.random.randint(min_len_v, max_len_v)
-                x1 = max(self.pad, cx - thick_v // 2); x2 = min(cw - self.pad, cx + thick_v // 2)
-                y1 = max(self.pad, cy - L // 2);       y2 = min(ch - self.pad, cy + L // 2)
+                L = np.random.randint(min_len_v, max_len_v)
+                dx = abs(x0 - cx)
+                chord_half = int(math.sqrt(max(0, r * r - dx * dx)) * float(self.EDGE_INSET_F))
+                halfL = min(L // 2, chord_half)
+                x1, x2 = x0 - thick_v // 2, x0 + thick_v // 2
+                y1, y2 = y0 - halfL, y0 + halfL
             else:
-                L  = np.random.randint(min_len_h, max_len_h)
-                x1 = max(self.pad, cx - L // 2);       x2 = min(cw - self.pad, cx + L // 2)
-                y1 = max(self.pad, cy - thick_h // 2); y2 = min(ch - self.pad, cy + thick_h // 2)
+                L = np.random.randint(min_len_h, max_len_h)
+                dy = abs(y0 - cy)
+                chord_half = int(math.sqrt(max(0, r * r - dy * dy)) * float(self.EDGE_INSET_F))
+                halfL = min(L // 2, chord_half)
+                x1, x2 = x0 - halfL, x0 + halfL
+                y1, y2 = y0 - thick_h // 2, y0 + thick_h // 2
 
             vx = np.random.randint(-drift_p, drift_p)
             vy = np.random.randint(-drift_p, drift_p)
@@ -905,13 +973,101 @@ class RectAvatarWindow2(RectAvatarWindow):
 
             self._particles.append({
                 "x1": x1, "y1": y1, "x2": x2, "y2": y2,
-                "vx": vx, "vy": vy, "birth": now, "life": self.RECT_LIFETIME,
-                "color": col
+                "vx": vx, "vy": vy,
+                "birth": now, "life": self.RECT_LIFETIME,
+                "color": col, "vertical": bool(vertical)
             })
 
         if len(self._particles) > self.MAX_PARTICLES:
             self._particles = self._particles[-self.MAX_PARTICLES:]
 
+    # ----- redraw override: draw circle BG + keep bars inside circle -----
+    def redraw(self):
+        now = time.perf_counter()
+        dt = max(0.0, now - self._last_time)
+        self._last_time = now
+
+        cx, cy, r = self._circle_geom()
+        self.canvas.delete("all")
+
+        # paint the visible circular area
+        self.canvas.create_oval(cx - r, cy - r, cx + r, cy + r,
+                                fill=self.BG, outline=self.BG)
+
+        if self.level <= 0:
+            self._particles.clear()
+            return
+
+        # level → spawn count (inherited modulation)
+        spawn = self._spawn_count()
+        if spawn > 0:
+            self._spawn(spawn)
+
+        alive = []
+        for p in self._particles:
+            age = now - p["birth"]
+            if age > p["life"]:
+                continue
+
+            # integrate motion
+            p["x1"] += p["vx"] * dt;
+            p["x2"] += p["vx"] * dt
+            p["y1"] += p["vy"] * dt;
+            p["y2"] += p["vy"] * dt
+
+            # gentle center pull (keeps things compact)
+            if float(self.CENTER_PULL) > 0.0:
+                mx = 0.5 * (p["x1"] + p["x2"]);
+                my = 0.5 * (p["y1"] + p["y2"])
+                pull = float(self.CENTER_PULL) * dt
+                dx = (cx - mx) * pull;
+                dy = (cy - my) * pull
+                p["x1"] += dx;
+                p["x2"] += dx;
+                p["y1"] += dy;
+                p["y2"] += dy
+                mx += dx;
+                my += dy  # update center
+            else:
+                mx = 0.5 * (p["x1"] + p["x2"]);
+                my = 0.5 * (p["y1"] + p["y2"])
+
+            # circle-aware clipping by chord (prevents leakage outside circle)
+            if p.get("vertical", False):
+                dx = mx - cx
+                max_half_thick = max(0, int(math.sqrt(max(0, r * r - dx * dx))))
+                half_thick = max(1, int((p["x2"] - p["x1"]) * 0.5))
+                half_thick = min(half_thick, max_half_thick)
+                p["x1"], p["x2"] = mx - half_thick, mx + half_thick
+
+                chord_half = max(0, int(math.sqrt(max(0, r * r - dx * dx)) * float(self.EDGE_INSET_F)))
+                halfL = min(int((p["y2"] - p["y1"]) * 0.5), chord_half)
+                p["y1"], p["y2"] = my - halfL, my + halfL
+            else:
+                dy = my - cy
+                max_half_thick = max(0, int(math.sqrt(max(0, r * r - dy * dy))))
+                half_thick = max(1, int((p["y2"] - p["y1"]) * 0.5))
+                half_thick = min(half_thick, max_half_thick)
+                p["y1"], p["y2"] = my - half_thick, my + half_thick
+
+                chord_half = max(0, int(math.sqrt(max(0, r * r - dy * dy)) * float(self.EDGE_INSET_F)))
+                halfL = min(int((p["x2"] - p["x1"]) * 0.5), chord_half)
+                p["x1"], p["x2"] = mx - halfL, mx + halfL
+
+            # fade via stipple
+            t = age / p["life"]
+            stipples = ("", "gray12", "gray25", "gray50", "gray75")
+            idx = min(len(stipples) - 1, int(t * len(stipples)))
+            stipple = stipples[idx]
+
+            self.canvas.create_rectangle(
+                int(p["x1"]), int(p["y1"]), int(p["x2"]), int(p["y2"]),
+                fill=p["color"], outline=p["color"],
+                stipple=stipple if stipple else None
+            )
+            alive.append(p)
+
+        self._particles = alive
 
 
 # === WEB SEARCH WINDOW CLASS ===
@@ -1769,6 +1925,7 @@ class App:
             max_tokens=self.cfg["qwen_max_tokens"]
         )
         # Give Qwen access to search functionality
+        self.qwen.set_main_app(self)
         self.qwen.set_search_handler(self.handle_ai_search_request)
 
         if hasattr(self.qwen, "model_path") and self.qwen.model_path:
@@ -2017,8 +2174,7 @@ class App:
             else:
                 # normal text model path
                 # Use search-enhanced generation
-                reply = self.qwen.generate_with_search(text)
-                reply = self._process_ai_response(reply)
+                reply = self.qwen.generate_with_search(text)  # ← THIS SHOULD BE CORRECT
 
                 # Only reset if we're definitely not in a vision context
                 if not self._should_use_vision_followup("dummy"):  # Check if context expired
@@ -2127,7 +2283,7 @@ class App:
 
         try:
             # Use your existing brave_search method
-            results = self.brave_search(search_query, 4)
+            results = self.brave_search(search_query, 6)
             search_summary = f"Search results for: {search_query}\n\n"
 
             # Process results using your existing methods
@@ -2138,8 +2294,8 @@ class App:
                         # Use your existing text extraction
                         text = self.extract_readable(html, item.url)
                         if len(text) > 400:  # Only summarize if we got substantial content
-                            # Use your existing summarization
-                            summary = self.summarise_with_qwen(text[:15000], item.url, None)
+                            # USE THE NEW NEWS-FOCUSED SUMMARIZATION
+                            summary = self.summarise_for_ai_search(text[:12000], item.url, None)
                             search_summary += f"## Result {i}: {item.title}\n"
                             search_summary += f"URL: {item.url}\n"
                             search_summary += f"Summary: {summary}\n\n"
@@ -2162,9 +2318,10 @@ class App:
         except Exception as e:
             return f"Search failed: {str(e)}"
 
-    def _process_ai_response(self, response: str) -> str:
+
+    def _process_ai_response(self, response: str, from_search_method: bool = False) -> str:
         """
-        Process AI response and execute any search commands
+        Process AI response - don't remove search markers when called from generate_with_search
         """
         import re
 
@@ -2175,22 +2332,20 @@ class App:
         if searches:
             self.logln(f"[AI] Detected {len(searches)} search request(s)")
 
-            all_search_results = ""
-            for search_query in searches:
-                clean_query = search_query.strip()
-                self.logln(f"[AI] Executing search: {clean_query}")
-
-                # Execute the search
-                search_results = self.handle_ai_search_request(clean_query)
-                all_search_results += f"\n\n--- SEARCH RESULTS: {clean_query} ---\n{search_results}"
-
-                # Update the response to include search results
-                response = response.replace(f"[SEARCH: {search_query}]", f"\n[I searched for: {clean_query}]")
-
-            # Append all search results to the final response
-            response += f"\n\n--- INCORPORATED SEARCH RESULTS ---{all_search_results}"
+            # Only remove search markers if NOT called from generate_with_search
+            if not from_search_method:
+                for search_query in searches:
+                    clean_query = search_query.strip()
+                    response = response.replace(f"[SEARCH: {search_query}]",
+                                                f"[I'm searching for: {clean_query}]")
+            else:
+                # If called from generate_with_search, keep the markers so it can process them
+                self.logln(f"[AI] Preserving search markers for generate_with_search: {searches}")
 
         return response
+
+
+
 
 
     # === ENHANCED: pass_vision_to_text ===
@@ -2579,17 +2734,13 @@ class App:
                 if use_vision:
                     self.logln(f"[vision][voice] follow-up → reuse last image (turns left: {self._vision_turns_left})")
                     reply = self._ollama_generate_with_retry(text, images=[self._last_image_path])
-
-                    # IMPORTANT: Set the vision reply immediately after generation
-                    self._set_last_vision_reply(reply)
-
-                    # Update state AFTER successful generation
+                    # Only decrement AFTER successful generation
                     self._update_vision_state(used_turn=True)
-                    self._last_was_vision = True  # Ensure this is set
+                    self._last_was_vision = True  # Ensure this stays True
                 else:
-                    self.logln("[vision][voice] not using vision (text-only)")
-                    reply = self.qwen.generate_with_search(text)
-                    reply = self._process_ai_response(reply)
+                    # normal text model path
+                    # Use search-enhanced generation
+                    reply = self.qwen.generate_with_search(text)  # ← THIS SHOULD ALREADY BE CORRECT
 
                     # Only reset if we're definitely not in a vision context
                     if not self._should_use_vision_followup("dummy"):  # Check if context expired
@@ -4088,6 +4239,126 @@ class App:
                 break
         return urls
 
+    def summarise_for_ai_search(self, text: str, url: str, pubdate: str):
+        """Enhanced detailed summarization for AI-triggered searches"""
+        text = text[:18000]  # More text for better context
+
+        # Enhanced date context
+        if pubdate:
+            date_context = f"PUBLICATION DATE: {pubdate}\n"
+        else:
+            # Try to extract approximate date from content
+            import re
+            date_matches = re.findall(
+                r'\b(?:20\d{2}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* 20\d{2})\b',
+                text[:3000])
+            date_context = f"MENTIONED DATES: {', '.join(date_matches[:3])}\n" if date_matches else ""
+
+        # ENHANCED PROMPT for more detailed, structured summaries
+        summary_prompt = (
+            "Create a COMPREHENSIVE but concise summary with the following structure:\n\n"
+            "## MAIN HEADLINES\n"
+            "- List 3-5 most important headlines with key details\n\n"
+            "## KEY FACTS & FIGURES\n"
+            "- Include specific numbers, dates, locations, names\n"
+            "- Quantitative data: amounts, percentages, statistics\n"
+            "- Timeframes and durations\n\n"
+            "## RECENT DEVELOPMENTS\n"
+            "- Latest updates and breaking news\n"
+            "- Recent changes or announcements\n"
+            "- Ongoing investigations or proceedings\n\n"
+            "## CONTEXT & BACKGROUND\n"
+            "- Brief relevant background if needed\n"
+            "- Connections to previous events\n\n"
+            "CRITICAL: Be SPECIFIC with names, numbers, dates, and locations. Avoid generic statements.\n"
+            f"{date_context}"
+            f"Source: {url}\n\nCONTENT TO SUMMARIZE:\n{text}"
+        )
+
+        try:
+            # Allow more tokens for detailed responses
+            payload = {
+                "model": "qwen2.5:7b-instruct",
+                "prompt": summary_prompt,
+                "stream": False,
+                "temperature": 0.2,  # Slightly higher for better phrasing
+                "max_tokens": 800  # More tokens for comprehensive summaries
+            }
+
+            with httpx.Client(timeout=75.0) as client:
+                r = client.post("http://localhost:11434/api/generate", json=payload)
+                r.raise_for_status()
+                response = r.json().get("response", "").strip()
+
+                # Enhanced fallback for generic responses
+                if (len(response) < 150 or
+                        "unfortunately" in response.lower() or
+                        "no content" in response.lower() or
+                        "could not find" in response.lower()):
+                    return self._extract_detailed_news(text[:10000])
+
+                return response
+
+        except Exception as e:
+            return self._extract_detailed_news(text[:8000])
+
+    def _extract_detailed_news(self, text: str) -> str:
+        """Enhanced fallback extraction with more structure"""
+        import re
+
+        # Extract key information with more context
+        sections = []
+
+        # Headlines and key sentences
+        sentences = re.split(r'[.!?]+', text)
+        key_sentences = []
+
+        important_indicators = [
+            'announced', 'reported', 'confirmed', 'revealed', 'disclosed',
+            'investigation', 'charged', 'arrested', 'settlement', 'agreement',
+            'election', 'resigned', 'appointed', 'launched', 'released',
+            'fire', 'accident', 'killed', 'injured', 'missing', 'found',
+            'storm', 'flood', 'earthquake', 'weather', 'forecast', 'temperature',
+            'budget', 'funding', 'cost', 'price', 'investment'
+        ]
+
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if (len(sentence) > 25 and
+                    any(indicator in sentence.lower() for indicator in important_indicators)):
+                key_sentences.append(sentence)
+                if len(key_sentences) >= 12:
+                    break
+
+        if key_sentences:
+            sections.append("## KEY DEVELOPMENTS")
+            sections.extend([f"- {s}" for s in key_sentences[:10]])
+
+        # Extract numbers and statistics
+        numbers = re.findall(r'\b(\$?[£€]?\d+(?:,\d+)*(?:\.\d+)?[%€£$]?(?:\s*(?:million|billion|thousand))?)\b',
+                             text[:5000])
+        if numbers:
+            sections.append(f"\n## KEY NUMBERS: {', '.join(set(numbers[:8]))}")
+
+        # Extract locations
+        locations = re.findall(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b', text[:3000])
+        unique_locs = list(
+            set([loc for loc in locations if len(loc) > 3 and loc not in ['The', 'This', 'That', 'There', 'Here']]))
+        if unique_locs:
+            sections.append(f"\n## MENTIONED LOCATIONS: {', '.join(unique_locs[:6])}")
+
+        if sections:
+            return "\n".join(sections)
+        else:
+            # Last resort: return structured excerpt
+            lines = text.split('\n')
+            meaningful_lines = [line.strip() for line in lines if len(line.strip()) > 40][:8]
+            return "## CONTENT OVERVIEW\n" + "\n".join([f"- {line}" for line in meaningful_lines])
+
+
+
+
+
     def summarise_with_qwen(self, text: str, url: str, pubdate: str):
         text = text[:20000]  # Limit text length
         pd_line = f"(Publish/Update date: {pubdate})\n" if pubdate else ""
@@ -4157,6 +4428,8 @@ class App:
                     return r.json().get("response", "").strip()
             except Exception as e:
                 return f"Summarization failed: {e}"
+
+
     def extract_images(self, html: str, base_url: str, limit: int = 3):
         urls = []
         try:
@@ -4184,21 +4457,7 @@ class App:
         return urls
 
 
-    def summarise_with_qwen(self, text: str, url: str, pubdate: str):
-        text = text[:20000]
-        pd_line = f"(Publish/Update date: {pubdate})\n" if pubdate else ""
 
-        prompt = (
-            "Summarize the following content in about 10–14 bullet points.\n"
-            "Be specific (who/what/where/when). Include dates/scores if present. Avoid filler.\n"
-            f"{pd_line}Source: {url}\n\nCONTENT:\n{text}"
-        )
-
-        payload = {"model": "qwen2.5:7b-instruct", "prompt": prompt, "stream": False}
-        with httpx.Client(timeout=90.0) as client:
-            r = client.post("http://localhost:11434/api/generate", json=payload)
-            r.raise_for_status()
-            return r.json().get("response", "").strip()
 
     def synthesize_search_results(self, text: str):
         """Speak search results using proper interruptible playback"""
