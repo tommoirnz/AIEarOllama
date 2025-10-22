@@ -26,8 +26,16 @@ from io import BytesIO
 from PIL import Image, ImageTk
 import matplotlib
 # This uses two models and a different Json file and handles images as well
-#Look for the Json file  called Json2. You will need two models as per the Json file loaded into ollama
-#can read equations off paper and handwriting. Uses qwen_llmSearch2.py
+# Look for the Json file  called Json2. You will need two models as per the Json file loaded into ollama
+# can read equations off paper and handwriting. Uses qwen_llmSearch2.py
+# Can use 'Sleep' and 'Awaken' to mute the microphone but text can still be used. There is also a switch to stop speech.
+# So you can run entirely in text mode if you so choose.
+# To search the internet you will need a key from Brave Search API https://brave.com/search/api/
+# It's free for a fair number of searches but after that you need to pay
+# Put that key in the file .env or the program won't work
+# Try asking it "what is the latest news in New Zealand and it will find that enws and summarise it.
+# Warning, Ai models make mistakes so check and answers
+# Tom Moir Oct 2025
 matplotlib.rcParams["figure.max_open_warning"] = 0
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -1853,6 +1861,11 @@ class App:
                 or self.cfg.get("vl_model_path")
                 or "qwen2.5-vl:7b"
         )
+        # === ADD SLEEP VARIABLES RIGHT HERE ===
+        self.sleep_mode = False
+        self.sleep_commands = ["sleep", "go to sleep", "rest mode", "silence", "stop listening"]
+        self.wake_commands = ["wake", "wake up", "awaken", "resume", "start listening", "listen again"]
+
 
         self.master = master
         master.title("Always Listening — Qwen (local)")
@@ -2124,16 +2137,8 @@ class App:
             temperature=self.cfg["qwen_temperature"],
             max_tokens=self.cfg["qwen_max_tokens"]
         )
-        # === CRITICAL: Connect main app to QwenLLM ===
-        self.qwen.set_main_app(self)
-        self.logln(
-            f"[DEBUG] QwenLLM main_app connected: {hasattr(self.qwen, 'main_app') and self.qwen.main_app is not None}")
 
-        # Also set search handler if the method exists
-        if hasattr(self.qwen, 'set_search_handler'):
-            self.qwen.set_search_handler(self.handle_ai_search_request)
-            self.logln("[DEBUG] Search handler connected")
-
+        # === MODIFIED SYSTEM PROMPT - LESS REPETITIVE ===
         # System prompt with REAL-TIME date awareness
         sys_prompt = (
                 self.cfg.get("system_prompt")
@@ -2150,24 +2155,25 @@ class App:
 
         enhanced_system_prompt = f"""{sys_prompt}
 
-    IMPORTANT: You have access to real-time information. The current date and time is:
-    - Date: {current_date} ({current_day})
-    - Time: {current_time}
+    BACKGROUND KNOWLEDGE: You have access to real-time information. The current date is {current_date} and the time is {current_time}.
 
-    You MUST use this current date and time when answering questions about:
-    - Today's date, current time, day of the week
-    - Scheduling, appointments, time-sensitive information
-    - Historical references relative to today
-    - Time-based calculations
+    USE THIS INFORMATION WHEN:
+    - Specifically asked about date, time, or scheduling
+    - Questions require current time context
+    - Making time-sensitive calculations
 
-    Do NOT say you need to search for the current date/time. You already know it.
-    If asked about the date or time, provide the information directly: "Today is {current_date} and the time is {current_time}."
+    DO NOT:
+    - Include date/time in every response unless specifically relevant
+    - Repeat "Today is [date]" in casual conversation
+    - Mention your access to real-time info unless asked
 
-    For future or past dates relative to today, you can calculate based on this reference point.
+    For casual conversation, respond naturally without unnecessary date/time mentions.
     """
 
         self.qwen.system_prompt = enhanced_system_prompt
-        self.logln(f"[qwen] ✅ System prompt updated with real-time awareness")
+        self.logln(f"[qwen] ✅ System prompt updated with balanced time awareness")
+
+
         self.logln(f"[qwen] 📅 Current date in system: {current_date} at {current_time}")
 
     def _apply_config_defaults(self):
@@ -2937,6 +2943,33 @@ class App:
         self.logln("[info] Listening…")
 
         while self.running:
+            # === MODIFIED SLEEP MODE CHECK ===
+            if self.sleep_mode:
+                # Still process audio but ONLY check for wake commands while sleeping
+                try:
+                    utt = next(it)
+                    # Check if we got any audio data (utt is a numpy array)
+                    if utt is not None and utt.size > 0:  # ← FIXED LINE
+                        text = self.asr.transcribe(utt, self.cfg["sample_rate"])
+
+                        if text:
+                            text_lower = text.lower()
+                            # ONLY respond to wake commands while sleeping
+                            if any(cmd in text_lower for cmd in self.wake_commands):
+                                self.exit_sleep_mode()
+                                # Don't process this utterance further
+                                continue
+                            else:
+                                self.logln(f"[sleep] Ignored: '{text}'")
+                                # Play gentle "I'm sleeping" beep
+                                self.play_sleep_reminder_beep()
+                except StopIteration:
+                    break
+                except Exception as e:
+                    self.logln(f"[sleep] audio error: {e}")
+
+                continue  # Skip normal processing while sleeping
+
             cur_mode = self.duplex_mode.get()
             if cur_mode != self._mode_last:
                 try:
@@ -2974,7 +3007,7 @@ class App:
                 self._beep_once_guard = True
 
             try:
-                utt = next(it)
+                utt = next(it)  # ← THIS IS THE ONLY utt = next(it) CALL NOW
             except StopIteration:
                 break
             if not self.running:
@@ -3002,6 +3035,7 @@ class App:
                     continue
                 else:
                     self._barge_latched = False
+
 
             # Handle vision/text routing
             try:
@@ -3485,6 +3519,27 @@ class App:
         import time as _t
 
         text = (raw_text or "").strip().lower()
+        # Check sleep/wake commands FIRST, before any other processing
+        if any(cmd in text for cmd in self.sleep_commands) and not self.sleep_mode:
+            self.enter_sleep_mode()
+            return True
+
+        if any(cmd in text for cmd in self.wake_commands) and self.sleep_mode:
+            self.exit_sleep_mode()
+            return True
+
+        # If in sleep mode, ignore ALL other voice commands
+        if self.sleep_mode:
+            self.logln("[sleep] 💤 Ignoring voice input while sleeping")
+            # Play gentle reminder beep
+            try:
+                fs = 16000
+                t = np.linspace(0, 0.1, int(fs * 0.1))
+                beep = 0.1 * np.sin(2 * np.pi * 440 * t)
+                sd.play(beep, fs, blocking=False)
+            except:
+                pass
+            return True
 
         # Light normalization
         norm_map = {
@@ -3751,6 +3806,105 @@ class App:
 
         return False
     # routine ends here
+
+    # === Awaken and Sleep Methods ===
+
+    def enter_sleep_mode(self):
+        """Enter sleep mode - ignore all voice input"""
+        if not self.sleep_mode:
+            self.sleep_mode = True
+            self.set_light("idle")
+            self.logln("[sleep] 💤 Sleep mode activated - ignoring voice input")
+            self.play_sleep_chime()
+
+            # Optional: Show sleep status in UI
+            try:
+                self.master.title("Always Listening — Qwen (SLEEPING)")
+            except:
+                pass
+
+    def exit_sleep_mode(self):
+        """Exit sleep mode - resume normal operation"""
+        if self.sleep_mode:
+            self.sleep_mode = False
+            self.set_light("listening")
+            self.logln("[sleep] 🔔 Awake mode activated - listening for voice")
+            self.play_wake_chime()
+
+            # Restore normal title
+            try:
+                self.master.title("Always Listening — Qwen (local)")
+            except:
+                pass
+
+    def play_sleep_chime(self):
+        """Play sleep confirmation chime"""
+        try:
+            fs = 16000
+            duration = 0.3
+            t = np.linspace(0, duration, int(fs * duration), endpoint=False)
+            # Descending tone for sleep
+            freq = np.linspace(660, 220, len(t))
+            beep = 0.2 * np.sin(2 * np.pi * freq * t)
+            fade = int(0.02 * fs)
+            beep[:fade] *= np.linspace(0, 1, fade)
+            beep[-fade:] *= np.linspace(1, 0, fade)
+            sd.play(beep, fs, blocking=False)
+        except Exception as e:
+            print(f"[sleep-chime] {e}")
+
+    def play_sleep_reminder_beep(self):
+        """Play noticeable beep to indicate sleeping mode when someone talks"""
+        try:
+            fs = 16000
+            duration = 0.25  # Slightly longer
+            t = np.linspace(0, duration, int(fs * duration), endpoint=False)
+
+            # More noticeable tone - higher frequency and louder
+            freq1 = 440  # A4 note - more noticeable
+            freq2 = 330  # E4 note - for a two-tone effect
+
+            # Create a two-tone beep for better noticeability
+            beep1 = 0.3 * np.sin(2 * np.pi * freq1 * t[:len(t) // 2])
+            beep2 = 0.3 * np.sin(2 * np.pi * freq2 * t[len(t) // 2:])
+            beep = np.concatenate([beep1, beep2])
+
+            # Smooth fade in/out
+            fade = int(0.02 * fs)
+            beep[:fade] *= np.linspace(0, 1, fade)
+            beep[-fade:] *= np.linspace(1, 0, fade)
+
+            # Get output device and play
+            out_dev = self._selected_out_device_index()
+            try:
+                sd.play(beep, fs, blocking=False, device=out_dev)
+            except Exception as dev_error:
+                # Fallback to default device
+                sd.play(beep, fs, blocking=False)
+
+            self.logln("[sleep] 💤 (sleep reminder beep)")
+
+        except Exception as e:
+            self.logln(f"[sleep-reminder] error: {e}")
+
+
+
+    def play_wake_chime(self):
+        """Play wake confirmation chime"""
+        try:
+            fs = 16000
+            duration = 0.25
+            t = np.linspace(0, duration, int(fs * duration), endpoint=False)
+            # Ascending tone for wake
+            freq = np.linspace(220, 660, len(t))
+            beep = 0.2 * np.sin(2 * np.pi * freq * t)
+            fade = int(0.01 * fs)
+            beep[:fade] *= np.linspace(0, 1, fade)
+            beep[-fade:] *= np.linspace(1, 0, fade)
+            sd.play(beep, fs, blocking=False)
+        except Exception as e:
+            print(f"[wake-chime] {e}")
+
     def _ollama_generate(self, prompt: str, images=None):
         """
         Use Ollama REST directly when images are provided.
