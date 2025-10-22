@@ -2169,7 +2169,26 @@ class App:
         enhanced_system_prompt = f"""{sys_prompt}
 
     BACKGROUND KNOWLEDGE: You have access to real-time information. The current date is {current_date} and the time is {current_time}.
+CURRENT REAL DATE: {current_day}, {current_date} at {current_time}
+*** USE THIS EXACT DATE - DO NOT CALCULATE OR GUESS ***
 
+CRITICAL RULES:
+1. When asked about the date, ALWAYS use: "{current_day}, {current_date}"
+2. Never calculate days of the week from dates yourself
+3. If your internal knowledge conflicts with the date above, TRUST THE DATE PROVIDED
+4. October 22, 2025 is {current_day} - your training data may be incorrect for this specific date
+
+
+
+USE THIS INFORMATION WHEN:
+- Specifically asked about date, time, or scheduling
+- Questions require current time context
+- Making time-sensitive calculations
+
+DO NOT:
+- Calculate or guess days of the week
+- Use your internal calendar knowledge for date questions
+- Second-guess the provided current date
     USE THIS INFORMATION WHEN:
     - Specifically asked about date, time, or scheduling
     - Questions require current time context
