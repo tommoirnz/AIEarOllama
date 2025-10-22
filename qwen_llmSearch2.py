@@ -25,9 +25,16 @@ class QwenLLM:
         # Reference to main app for proper search coordination
         self.main_app = None
 
-    def set_main_app(self, app):
-        """Set reference to main App for proper search coordination"""
-        self.main_app = app
+    def set_main_app(self, main_app):
+        """Connect to the main application for search functionality"""
+        self.main_app = main_app
+        print(f"[QwenLLM] ✅ Main app connected: {main_app is not None}")
+
+    def set_search_handler(self, search_handler):
+        """Set the search handler function"""
+        self.search_handler = search_handler
+        print(f"[QwenLLM] ✅ Search handler connected: {search_handler is not None}")
+
 
     def _detect_endpoint(self):
         self.session.get(f"{self.base}/api/tags", timeout=3).raise_for_status()
@@ -220,104 +227,231 @@ class QwenLLM:
         self.search_handler = search_handler
 
     def generate_with_search(self, prompt: str) -> str:
-        """Generate with web search capability - FIXED VERSION"""
-        if self.main_app:
-            # Use a more direct and clear system prompt
-            search_enhanced_system = self.original_system_prompt + """
+        """Generate with web search capability - FIXED COMBINED APPROACH"""
+        print(f"[DEBUG] generate_with_search called with: '{prompt}'")
 
-    IMPORTANT: You have access to REAL-TIME WEB SEARCH using: [SEARCH: your search query]
+        # If no search capability, fall back
+        if not hasattr(self, 'search_handler') or not self.search_handler:
+            print(f"[DEBUG] ❌ No search handler - falling back to regular generate")
+            return self.generate(prompt)
 
-    Use web search for current information like:
-    - News, headlines, breaking news
-    - Weather forecasts and current conditions  
-    - Recent events and developments
-    - Live sports scores, stock prices
-    - Current political information
+        prompt_lower = prompt.lower()
 
-    When you need current information, use [SEARCH: your query] and I will provide you with real search results.
+        # === FORCED SEARCH for high-priority queries ===
+        forced_search_triggers = [
+            # Weather - ALWAYS search
+            'weather', 'temperature', 'forecast', '°c', '°f', 'rain',
+            'snow', 'wind', 'humid', 'cloud', 'sunny', 'storm',
+            # News - ALWAYS search
+            'news', 'headlines', 'breaking', 'latest news', 'current events',
+            'today\'s news', 'happening now',
+            # Sports - ALWAYS search
+            'sports', 'score', 'result', 'match', 'game', 'tournament',
+            # Stocks - ALWAYS search
+            'stock', 'share price', 'market', 'trading',
+            # TV - ALWAYS search
+            'tv', 'television', 'what\'s on', 'tonight', 'schedule', 'program'
+        ]
 
-    Examples:
-    "What's the latest news?" → [SEARCH: latest news headlines today]
-    "What's the weather in London?" → [SEARCH: current weather London]
-    "What are the latest sports scores?" → [SEARCH: latest sports scores]
+        # Check if this should be a forced search
+        should_force_search = any(trigger in prompt_lower for trigger in forced_search_triggers)
 
-    After receiving search results, use them to answer the question.
-    """
+        if should_force_search:
+            print(f"[DEBUG] 🎯 FORCED SEARCH TRIGGERED: {prompt}")
 
-            # Store current system prompt temporarily
-            current_system = self.system_prompt
-            self.system_prompt = search_enhanced_system
+            # Build appropriate search query
+            search_query = self._build_forced_search_query(prompt_lower)
+            print(f"[DEBUG] 🔍 Performing forced search: {search_query}")
 
             try:
-                # Let the AI decide if it wants to search
-                initial_response = self.generate(prompt, from_search_method=True)
+                # Perform the search directly
+                search_results = self.search_handler(search_query)
+                print(f"[DEBUG] 📊 Search results received: {len(search_results)} chars")
 
-                # Check if the AI included a search command
-                import re
-                search_pattern = r'\[SEARCH:\s*(.*?)\]'
-                searches = re.findall(search_pattern, initial_response, re.IGNORECASE)
+                # Generate response using real search data
+                response = self._generate_from_forced_search(prompt, search_results, prompt_lower)
+                return response
 
-                if searches:
-                    # Use main app's search system for consistent results
-                    all_search_results = ""
-                    for search_query in searches:
-                        clean_query = search_query.strip()
-                        self.main_app.logln(f"[AI] Performing coordinated search: {clean_query}")
-
-                        # ANNOUNCE SEARCH VOICE FEEDBACK
-                        self._announce_search_voice(clean_query)
-
-                        # Get REAL search results from the main app's search handler
-                        real_results = self.main_app.handle_ai_search_request(clean_query)
-                        all_search_results += f"\n\n--- SEARCH RESULTS: {clean_query} ---\n{real_results}"
-
-                    # Now generate a final response that incorporates the REAL search results
-                    if any(word in prompt.lower() for word in
-                           ['weather', 'temperature', 'forecast', '°c', '°f', 'rain']):
-                        follow_up_prompt = f"""
-    Original question: {prompt}
-
-    ACTUAL WEATHER DATA FROM SEARCH:
-    {all_search_results}
-
-    IMPORTANT FOR WEATHER RESPONSE:
-    - Use EXACT temperatures from search results (e.g., 11°C, 23°C, 20°C high, 11°C low)
-    - Use specific conditions mentioned (e.g., "showers", "cloudy", "sunny intervals")
-    - Include wind speeds if available (e.g., "15-40 km/h")
-    - Include timeframes (e.g., "Thursday", "next 10 days")
-    - DO NOT use [current temperature] or other placeholders
-    - If specific dates are mentioned, use them
-
-    Provide a detailed weather forecast using ONLY the actual data from the search results above.
-    """
-                    else:
-                        follow_up_prompt = f"""
-    Original question: {prompt}
-
-    ACTUAL SEARCH RESULTS:
-    {all_search_results}
-
-    CRITICAL: You MUST use the specific numbers, temperatures, names, and facts from the search results above.
-    DO NOT use generic placeholders like [current temperature], [date], or [location].
-    If the search results contain specific data like temperatures (e.g., 11°C, 23°C), use them exactly.
-    If the search results don't contain certain information, acknowledge what IS available.
-
-    Please provide a final answer that incorporates these real search results using the actual data provided.
-    """
-
-                    final_response = self.generate(follow_up_prompt, from_search_method=True)
-
-                    # Restore original system prompt
-                    self.system_prompt = current_system
-                    return final_response
-                else:
-                    # No search needed, return original response
-                    self.system_prompt = current_system
-                    return initial_response
             except Exception as e:
-                # Restore original system prompt on error
-                self.system_prompt = current_system
-                raise e
+                print(f"[DEBUG] ❌ Forced search failed: {e}")
+                # Fall back to regular generation
+                return self.generate(prompt)
+
+        # === AI-DECIDED SEARCH for other queries ===
         else:
-            # Fallback to regular generation
-            return self.generate(prompt)
+            print(f"[DEBUG] Using AI-decided search approach")
+            return self._generate_with_ai_decided_search(prompt)
+
+    def _generate_with_ai_decided_search(self, prompt: str) -> str:
+        """Let the AI decide if it wants to search (your original approach)"""
+        print(f"[DEBUG] Using AI-decided search for: {prompt}")
+
+        # Enhanced system prompt for better search decisions
+        search_enhanced_system = self.system_prompt + """
+
+    WEB SEARCH CAPABILITY:
+    You can search the web for current information when needed using: [SEARCH: your query]
+
+    Use web searches for:
+    - Current events, news, and recent developments (last 1-2 years)
+    - Specific facts, statistics, data, or technical specifications
+    - Recent research papers or scientific discoveries
+    - Current prices, product information, or market data
+    - Information that may have changed since your training data
+    - Political Information
+    - Bus or Train timetables
+    - Flights or flight times
+    - Weather information
+    - TV or Television programming timetables
+
+    Do NOT search for:
+    - General knowledge that you already know well
+    - Historical facts that are well-established
+    - Basic mathematical formulas or scientific principles
+    - Information that is unlikely to have changed
+
+    Search examples:
+    Good: [SEARCH: latest iPhone 15 specifications and prices]
+    Good: [SEARCH: who is the current prime minister of a country]
+    Good: [SEARCH: current climate change policy updates 2024]
+    Good: [SEARCH: recent breakthroughs in quantum computing 2024]
+    Avoid: [SEARCH: what is photosynthesis]
+    Avoid: [SEARCH: basic algebra formulas]
+
+    After receiving search results, analyze and incorporate them naturally into your response.
+    """
+
+        # Store original system prompt temporarily
+        original_system = self.system_prompt
+        self.system_prompt = search_enhanced_system
+
+        response = self.generate(prompt)
+
+        # Restore original system prompt
+        self.system_prompt = original_system
+
+        print(f"[DEBUG] AI-decided search response: {response[:100]}...")
+        return response
+
+    def _build_forced_search_query(self, prompt_lower: str) -> str:
+        """Build appropriate search query for forced searches - FIXED VERSION"""
+        if any(word in prompt_lower for word in ['weather', 'temperature', 'forecast']):
+            location = "Auckland, New Zealand"  # default
+            if "weather in" in prompt_lower:
+                location = prompt_lower.split("weather in")[-1].split('?')[0].strip()
+            elif "weather at" in prompt_lower:
+                location = prompt_lower.split("weather at")[-1].split('?')[0].strip()
+            elif "weather for" in prompt_lower:
+                location = prompt_lower.split("weather for")[-1].split('?')[0].strip()
+            elif "weather like in" in prompt_lower:  # ADDED THIS PATTERN
+                location = prompt_lower.split("weather like in")[-1].split('?')[0].strip()
+            elif "temperature in" in prompt_lower:
+                location = prompt_lower.split("temperature in")[-1].split('?')[0].strip()
+            elif "temperature at" in prompt_lower:
+                location = prompt_lower.split("temperature at")[-1].split('?')[0].strip()
+            elif "forecast for" in prompt_lower:
+                location = prompt_lower.split("forecast for")[-1].split('?')[0].strip()
+            elif "forecast in" in prompt_lower:
+                location = prompt_lower.split("forecast in")[-1].split('?')[0].strip()
+
+            # Also check for specific city names as fallback
+            elif "london" in prompt_lower:
+                location = "London, UK"
+            elif "auckland" in prompt_lower:
+                location = "Auckland, New Zealand"
+            elif "new york" in prompt_lower or "nyc" in prompt_lower:
+                location = "New York, USA"
+            elif "sydney" in prompt_lower:
+                location = "Sydney, Australia"
+            elif "tokyo" in prompt_lower:
+                location = "Tokyo, Japan"
+
+            print(f"[DEBUG] Using location: '{location}' for query: '{prompt_lower}'")
+            return f"current weather {location}"
+
+        elif any(word in prompt_lower for word in ['news', 'headlines', 'breaking']):
+            location = ""
+            if "new zealand" in prompt_lower or "nz" in prompt_lower:
+                location = "New Zealand"
+            elif "uk" in prompt_lower or "united kingdom" in prompt_lower or "london" in prompt_lower:
+                location = "UK"
+            elif "us" in prompt_lower or "usa" in prompt_lower or "america" in prompt_lower:
+                location = "United States"
+            return f"latest news headlines {location}".strip()
+
+        elif any(word in prompt_lower for word in ['sports', 'score', 'match']):
+            return "latest sports news scores"
+
+        elif any(word in prompt_lower for word in ['stock', 'share price']):
+            return "current stock market prices"
+
+        elif any(word in prompt_lower for word in ['tv', 'television', 'what\'s on', 'tonight']):
+            if "tv1" in prompt_lower or "tvnz" in prompt_lower:
+                return "TV1 TVNZ New Zealand tonight schedule programming"
+            elif "tv2" in prompt_lower:
+                return "TV2 New Zealand tonight schedule"
+            elif "tv3" in prompt_lower:
+                return "TV3 New Zealand tonight schedule"
+            else:
+                return "New Zealand television tonight schedule programming"
+
+        # Default: use key parts of the prompt
+        return prompt_lower
+
+    def _generate_from_forced_search(self, original_prompt: str, search_results: str, prompt_lower: str) -> str:
+        """Generate response using actual search data from forced search - FIXED VERSION"""
+        if any(word in prompt_lower for word in ['weather', 'temperature']):
+            prompt_template = f"""
+    USER QUESTION: {original_prompt}
+
+    REAL-TIME WEATHER DATA FROM WEB SEARCH:
+    {search_results}
+
+    CRITICAL: You have REAL-TIME WEATHER DATA from a web search. You MUST use the ACTUAL temperature numbers and weather conditions.
+    - Use EXACT temperatures like "19°C", "65°F" from the search results
+    - Use SPECIFIC conditions like "sunny", "rainy", "cloudy" from the search results  
+    - Include wind speeds and humidity if available in the results
+    - Mention specific locations and timeframes mentioned in the results
+    - DO NOT say "I don't have real-time access" - you have the search results right here
+    - DO NOT give generic weather patterns - use only the actual data found
+
+    Provide a direct, confident weather report using ONLY the real data above.
+    """
+        elif any(word in prompt_lower for word in ['news', 'headlines']):
+            prompt_template = f"""
+    USER QUESTION: {original_prompt}
+
+    REAL-TIME NEWS FROM WEB SEARCH:
+    {search_results}
+
+    CRITICAL: You have REAL-TIME NEWS from a web search. You MUST use the ACTUAL news stories and headlines.
+    - Include specific news events and developments from the results
+    - Mention names, places, and dates from the results
+    - Focus on the most recent and relevant information
+    - DO NOT say "I don't have real-time access" - you have the search results right here
+
+    Provide the latest news update using ONLY the real data above.
+    """
+        else:
+            prompt_template = f"""
+    USER QUESTION: {original_prompt}
+
+    REAL-TIME INFORMATION FROM WEB SEARCH:
+    {search_results}
+
+    CRITICAL: You have REAL-TIME DATA from a web search. You MUST use the ACTUAL information.
+    - Be specific and use the real data found
+    - DO NOT say "I don't have real-time access" - you have the search results right here
+    - If specific numbers, names, or facts are in the results, use them exactly
+
+    Provide a direct answer using ONLY the information from the search results above.
+    """
+
+        response = self.generate(prompt_template)
+        print(f"[DEBUG] Generated response from forced search: {response[:200]}...")
+
+        # === CRITICAL: Route to search window ===
+        if self.main_app and hasattr(self.main_app, 'preview_search_results'):
+            self.main_app.preview_search_results(response)
+
+        return response
