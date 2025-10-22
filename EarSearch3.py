@@ -2137,6 +2137,19 @@ class App:
             temperature=self.cfg["qwen_temperature"],
             max_tokens=self.cfg["qwen_max_tokens"]
         )
+        # ===  CRITICAL CONNECTION LINES ===
+        # Connect main app to QwenLLM
+        self.qwen.set_main_app(self)
+        self.logln(
+            f"[DEBUG] QwenLLM main_app connected: {hasattr(self.qwen, 'main_app') and self.qwen.main_app is not None}")
+
+        # Connect search handler
+        if hasattr(self.qwen, 'set_search_handler'):
+            self.qwen.set_search_handler(self.handle_ai_search_request)
+            self.logln("[DEBUG] ✅ Search handler connected to QwenLLM")
+        else:
+            self.logln("[DEBUG] ❌ QwenLLM missing set_search_handler method")
+        # === END CRITICAL CONNECTION LINES ===
 
         # === MODIFIED SYSTEM PROMPT - LESS REPETITIVE ===
         # System prompt with REAL-TIME date awareness
