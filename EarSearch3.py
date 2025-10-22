@@ -2534,7 +2534,8 @@ class App:
 
         self._last_search_query = search_query
         self.logln(f"[AI Search] Query: {search_query}")
-
+        # === ADD VOICE FEEDBACK FOR AI-TRIGGERED SEARCHES ===
+        self.speak_search_status(f"Searching for {search_query}")
         try:
             # Use your existing brave_search method
             results = self.brave_search(search_query, 6)
@@ -3311,6 +3312,47 @@ class App:
         finally:
             self.speaking_flag = prev
 
+    def speak_search_status(self, message="Searching the internet for this information"):
+        """Speak search status messages with minimal interruption"""
+        if not message or not message.strip():
+            return
+
+        try:
+            # Clean the text for TTS (removes LaTeX, etc.)
+            clean_message = clean_for_tts(message)
+            status_path = "out/search_status.wav"
+
+            # Use the same TTS synthesis as regular responses
+            if self.synthesize_to_wav(clean_message, status_path, role="text"):
+                # Play in a separate thread to not block the main application
+                def play_status():
+                    try:
+                        # Brief pause to ensure it doesn't cut off any current speech
+                        time.sleep(0.1)
+
+                        # Get the output device
+                        out_dev = self._selected_out_device_index()
+
+                        # Load and play the audio file
+                        data, fs = sf.read(status_path, dtype="float32")
+                        if data.size > 0:
+                            # Play without blocking - user can still speak or do other things
+                            sd.play(data, fs, blocking=False, device=out_dev)
+                            self.logln(f"[search-status] Playing: {message}")
+
+                    except Exception as e:
+                        # Non-critical error - just log it
+                        self.logln(f"[search-status] play error: {e}")
+
+                # Start the playback in a separate thread
+                threading.Thread(target=play_status, daemon=True).start()
+
+        except Exception as e:
+            self.logln(f"[search-status] synthesis error: {e}")
+
+
+
+
     def play_wav_with_interrupt(self, path, token=None):
         import platform as _plat
         start_time = time.monotonic()
@@ -3618,7 +3660,8 @@ class App:
 
                 if query:
                     self.logln(f"[search] Voice search: {query}")
-
+                    # === AI says it is search with speech, not for text only though ===
+                    self.speak_search_status(f"Searching for {query}")
                     # Ensure search window exists and is visible - FIXED
                     self.toggle_search_window(ensure_visible=True)
 
