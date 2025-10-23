@@ -126,6 +126,10 @@ class MathSpeechConverter:
         tex = re.sub(r'\\frac\{\s*d\s*\}\{\s*d\s*([^}]+)\s*\}', r'derivative with respect to \1', tex)
         tex = re.sub(r'\\dot\s*\{([^}]+)\}', r'\1 dot', tex)
         tex = re.sub(r'\\ddot\s*\{([^}]+)\}', r'\1 double dot', tex)
+
+        # NEW: Handle standalone differentials like du, dv before other processing
+        tex = re.sub(r'\b(\\?d[uvxyz])\b', lambda m: ' '.join(m.group(1).replace('\\', '')), tex)
+
         return tex
 
     def _speakify_summation(self, tex: str) -> str:
@@ -141,15 +145,31 @@ class MathSpeechConverter:
         tex = re.sub(r'\\lim\b', 'limit of', tex)
         return tex
 
+    def _fix_differential_pronunciation(self, s: str) -> str:
+        """Convert du → d u, dx → d x, etc."""
+        s = re.sub(r'\b(d[uvxyz])\b', lambda m: ' '.join(m.group(1)), s)
+        s = re.sub(r'([∂Δ])([a-zA-Z])', r'\1 \2', s)
+        return s
+
+    def _fix_simple_powers(self, s: str) -> str:
+        """Convert powers to natural speech"""
+        # Handle squared and cubed first
+        s = re.sub(r'([a-zA-Zα-ωΑ-Ω])\s*\^\s*2\b', r'\1 squared', s)
+        s = re.sub(r'([a-zA-Zα-ωΑ-Ω])\s*\^\s*3\b', r'\1 cubed', s)
+        s = re.sub(r'(\d+)\s*\^\s*2\b', r'\1 squared', s)
+        s = re.sub(r'(\d+)\s*\^\s*3\b', r'\1 cubed', s)
+
+        # Then handle other simple powers (letters and numbers)
+        s = re.sub(r'([a-zA-Zα-ωΑ-Ω])\s*\^\s*([A-Za-z0-9])', r'\1 to the power of \2', s)
+        s = re.sub(r'(\d+)\s*\^\s*([A-Za-z0-9])', r'\1 to the power of \2', s)
+
+        return s
+
+
+
     def convert_math_to_speech(self, tex: str) -> str:
         """
         Convert LaTeX math expression to spoken English
-
-        Args:
-            tex: LaTeX math expression
-
-        Returns:
-            Spoken English version of the math expression
         """
         if not tex.strip():
             return 'empty expression'
@@ -178,13 +198,11 @@ class MathSpeechConverter:
             if s2 == s: break
             s = s2
 
-        # Handle exponents and subscripts
-        s = re.sub(r'\^\{2\}', ' squared', s)
-        s = re.sub(r'\^\{3\}', ' cubed', s)
+        # Handle exponents and subscripts - ONLY process braces now
         s = re.sub(r'\^\{([^}]+)\}', r' to the power of \1', s)
-        s = re.sub(r'\^([A-Za-z0-9])', r' to the power of \1', s)
         s = re.sub(r'_\{([^}]+)\}', r' sub \1', s)
         s = re.sub(r'_([A-Za-z0-9])', r' sub \1', s)
+        # REMOVED: s = re.sub(r'\^([A-Za-z0-9])', r' to the power of \1', s)
 
         # Handle Greek letters
         for greek, spoken in self._math_greek_letters.items():
@@ -205,10 +223,17 @@ class MathSpeechConverter:
         s = s.replace('*', ' times ')
         s = s.replace('/', ' divided by ')
 
+        # NOW handle ALL simple powers (including ^2, ^3, ^n, etc.)
+        s = self._fix_simple_powers(s)
+
+        # Handle differentials like du, dv, dx to prevent "du" as a word
+        s = self._fix_differential_pronunciation(s)
+
         # Normalize whitespace
         s = re.sub(r'\s+', ' ', s).strip()
 
         return s or 'mathematical expression'
+
 
     def _normalize_delimiters(self, s: str) -> str:
         """Normalize LaTeX delimiters"""
