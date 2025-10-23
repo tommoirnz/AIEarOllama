@@ -2,7 +2,7 @@
 # === SUPPRESS HARMLESS WARNINGS ===
 # Add to your existing warning suppression
 import warnings
-
+#24/10 2025 All working but a few duplicated procedures
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -2758,10 +2758,10 @@ DO NOT:
                 self._update_vision_state(used_turn=True)
 
                 self.logln(f"[qwen] {reply}")
-                self.preview_latex(reply, context="vision")  # <-- UNCOMMENTED
+                self.preview_latex(reply, context="vision")
 
-                # IMPORTANT: Set the vision reply BEFORE any playback starts
-                self._set_last_vision_reply(reply)
+                # CRITICAL FIX: Store the reply IMMEDIATELY after generation
+                self._set_last_vision_reply(reply, source="ask_vision")
 
                 clean = clean_for_tts(reply, speak_math=self.speak_math_var.get())
 
@@ -2918,8 +2918,8 @@ DO NOT:
         except Exception as e:
             self.logln(f"[auto-send] error: {e}")
 
-    def _set_last_vision_reply(self, reply: str):
-        """Store the most recent vision reply and log a concise confirmation."""
+    def _set_last_vision_reply(self, reply: str, source: str = "unknown"):
+        """Store the most recent vision reply with better tracking."""
         try:
             # Use thread-safe assignment
             self._last_vision_reply = (reply or "").strip()
@@ -2929,16 +2929,17 @@ DO NOT:
             if len(preview) > 120:
                 preview = preview[:117] + "..."
 
-            # Log immediately to confirm it's being set
-            self.logln(f"[vision][cache] ✅ saved reply ({len(self._last_vision_reply)} chars): {preview}")
+            # Enhanced logging with source tracking
+            self.logln(f"[vision][cache] ✅ {source}: saved reply ({len(self._last_vision_reply)} chars): {preview}")
 
-            # Also log the method that called this (for debugging)
-            import inspect
-            caller = inspect.stack()[1].function
-            self.logln(f"[vision][cache] called from: {caller}")
+            # Debug info
+            self.logln(f"[vision][cache] turns_left={self._vision_turns_left}, last_was_vision={self._last_was_vision}")
 
         except Exception as e:
-            self.logln(f"[vision][cache] ❌ failed to store reply: {e}")
+            self.logln(f"[vision][cache] ❌ {source}: failed to store reply: {e}")
+
+
+
 
     def _refresh_last_reply(self):
         """Debug method to show what's currently in the last vision reply."""
@@ -3317,6 +3318,10 @@ DO NOT:
                     # Only decrement AFTER successful generation
                     self._update_vision_state(used_turn=True)
                     self._last_was_vision = True  # Ensure this stays True
+
+                    # CRITICAL FIX: Store follow-up replies too
+                    self._set_last_vision_reply(reply, source="voice_followup")
+
                 else:
                     # normal text model path
                     # Use search-enhanced generation
