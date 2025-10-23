@@ -93,7 +93,7 @@ from pydub import AudioSegment
 ...
 
 # Import the math speech converter
-from Speak_Maths import MathSpeechConverter, make_speakable_math, convert_math_to_speech
+from Speak_Maths import MathSpeechConverter
 
 # Create a global instance
 math_speech_converter = MathSpeechConverter()
@@ -155,7 +155,9 @@ def clean_for_tts(text: str, speak_math: bool = True) -> str:
         return ""
 
     # Use the math speech converter to handle LaTeX math
-    cleaned_text = make_speakable_math(text, speak_math=speak_math)
+    cleaned_text = math_speech_converter.make_speakable_text(text, speak_math=speak_math)
+
+
 
     # Additional light cleanup for TTS
     cleaned_text = re.sub(r"[#*_`~>\[\]\(\)-]", "", cleaned_text)
