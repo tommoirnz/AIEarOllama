@@ -86,6 +86,15 @@ from asr_whisper import ASR
 from qwen_llmSearch2 import QwenLLM
 from pydub import AudioSegment
 
+...
+
+# Import the math speech converter
+from Speak_Maths import MathSpeechConverter, make_speakable_math, convert_math_to_speech
+
+# Create a global instance
+math_speech_converter = MathSpeechConverter()
+
+
 # ===  ITEM DATACLASS ===
 @dataclass
 class Item:
@@ -126,25 +135,30 @@ def load_cfg():
 
 
 # ---------- TTS cleaner ----------
-def clean_for_tts(text: str) -> str:
+def clean_for_tts(text: str, speak_math: bool = True) -> str:
     """
-    Collapse ANY LaTeX/math to the word 'equation' and do light cleanup.
-    Supports: ```math```, \[...\], $$...$$, \(...\), $...$
+    Enhanced TTS cleaner that converts LaTeX math to spoken English.
+
+    Args:
+        text: Input text containing LaTeX math
+        speak_math: If True, convert math to speech; if False, say "equation"
+
+    Returns:
+        Text ready for TTS with math properly spoken
     """
-    math_pat = re.compile(
-        r"```(?:math|latex)\s+.+?```"
-        r"|\\\[(.+?)\\\]"
-        r"|\$\$(.+?)\$\$"
-        r"|\\\((.+?)\\\)"
-        r"|\$(.+?)\$",
-        flags=re.DOTALL | re.IGNORECASE,
-    )
-    text = math_pat.sub(" equation ", text)
-    text = re.sub(r"[#*_`~>\[\]\(\)-]", "", text)  # Added hyphen/dash here
-    text = re.sub(r":[a-z_]+:", "", text)
-    text = re.sub(r"^[QAqa]:\s*", "", text)
-    text = re.sub(r"\s{2,}", " ", text)
-    return text.strip()
+    if not text:
+        return ""
+
+    # Use the math speech converter to handle LaTeX math
+    cleaned_text = make_speakable_math(text, speak_math=speak_math)
+
+    # Additional light cleanup for TTS
+    cleaned_text = re.sub(r"[#*_`~>\[\]\(\)-]", "", cleaned_text)
+    cleaned_text = re.sub(r":[a-z_]+:", "", cleaned_text)
+    cleaned_text = re.sub(r"^[QAqa]:\s*", "", cleaned_text)
+    cleaned_text = re.sub(r"\s{2,}", " ", cleaned_text)
+
+    return cleaned_text.strip()
 
 
 def purge_temp_images(folder="out"):
@@ -2102,6 +2116,10 @@ class App:
         ttk.Checkbutton(top, text="Append LaTeX", variable=self.latex_append_mode).grid(row=2, column=7, padx=6)
         ttk.Button(top, text="Clear LaTeX", command=self.clear_latex).grid(row=2, column=8, padx=5)
 
+        # Checkbox for speak_math
+        self.speak_math_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(top, text="Speak Math", variable=self.speak_math_var,
+                        command=self.update_speak_math_setting).grid(row=0, column=12, padx=6)
 
         # Avatar
         self.avatar_win = None
@@ -2429,7 +2447,10 @@ DO NOT:
         except Exception as e:
             self.logln(f"[search] window error: {e}")
 
-
+    def update_speak_math_setting(self):
+        """Update the speak math setting - can be called when the checkbox changes"""
+        self.logln(f"[math] Speak math: {self.speak_math_var.get()}")
+        
     # === NEW: Unified Vision State Manager ===
     def _update_vision_state(self, used_turn: bool = False, reset: bool = False, new_image: bool = False):
         """Thread-safe vision state management"""
@@ -2583,7 +2604,7 @@ DO NOT:
         self.logln(f"[qwen] {reply}")
 
         self._set_last_vision_reply(reply)
-        clean = clean_for_tts(reply)
+        clean = clean_for_tts(reply, speak_math=self.speak_math_var.get())
 
         # unified playback fencing
         with self._play_lock:
@@ -2732,7 +2753,7 @@ DO NOT:
                 # IMPORTANT: Set the vision reply BEFORE any playback starts
                 self._set_last_vision_reply(reply)
 
-                clean = clean_for_tts(reply)
+                clean = clean_for_tts(reply, speak_math=self.speak_math_var.get())
 
                 with self._play_lock:
                     self._play_token += 1
@@ -3313,7 +3334,7 @@ DO NOT:
             # PREVIEW THE RESPONSE FOR VOICE QUERIES
             self.preview_latex(reply, context="text")
 
-            clean = clean_for_tts(reply)
+            clean = clean_for_tts(reply, speak_math=self.speak_math_var.get())
             self.speaking_flag = True
             self.interrupt_flag = False
             self.set_light("speaking")
@@ -3552,7 +3573,7 @@ DO NOT:
 
         try:
             # Clean the text for TTS
-            clean_message = clean_for_tts(message)
+            clean_message = clean_for_tts(message, speak_math=self.speak_math_var.get())
             status_path = "out/search_status.wav"
 
             if self.synthesize_to_wav(clean_message, status_path, role="text"):
@@ -4725,23 +4746,26 @@ DO NOT:
                     self.logln("[auto-mute] 🔇 Auto-muted Text AI (Vision AI is speaking)")
                     self.update_mute_buttons()
 
-
     def synthesize_to_wav(self, text, out_wav, role="text"):
+        """Synthesize text to WAV with enhanced math speaking"""
 
-        """Synthesize text to WAV with mute checking"""
-
-        # === ADD THIS CHECK AT THE START ===
-        # Check mute states before doing any TTS synthesis
+        # Check mute states first
         if role == "text" and self.text_ai_muted:
             self.logln("[mute] 🔇 Text AI muted - skipping TTS synthesis completely")
-            return False  # This prevents the WAV file from being created
+            return False
         elif role == "vision" and self.vision_ai_muted:
             self.logln("[mute] 🔇 Vision AI muted - skipping TTS synthesis completely")
-            return False  # This prevents the WAV file from being created
-        # === END OF MUTE CHECK ===
+            return False
 
+        # Use the toggle setting
+        speak_math = self.speak_math_var.get()
+        clean_text = clean_for_tts(text, speak_math=speak_math)
+
+        # Rest of your existing synthesize_to_wav code...
         import time
         engine = self.tts_engine.get()
+
+
 
         # Enhanced file locking protection
         tmp = out_wav + ".tmp.wav"
@@ -5490,11 +5514,15 @@ DO NOT:
                 return
 
             try:
+                # Use math speaking for search results too
+                speak_math = getattr(self, 'speak_math_var', tk.BooleanVar(value=True)).get()
+                clean_tts_text = clean_for_tts(text, speak_math=speak_math)
+
                 # === CRITICAL: Use DEDICATED search window ===
                 self.preview_search_results(text)
 
                 # Continue with TTS...
-                clean_tts_text = clean_for_tts(text)
+                #clean = clean_for_tts(reply, speak_math=self.speak_math_var.get())
                 output_path = "out/search_results.wav"
 
                 if self.synthesize_to_wav(clean_tts_text, output_path, role="text"):
