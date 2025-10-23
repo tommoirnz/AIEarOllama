@@ -308,35 +308,3 @@ class MathSpeechConverter:
 
         return base or "[silence]"
 
-
-# ==================== CONVENIENCE FUNCTIONS ====================
-
-# Global instance for backward compatibility
-_math_speech_converter = MathSpeechConverter()
-
-
-def make_speakable_math(text: str, speak_math: bool = True) -> str:
-    """
-    Convenience function that uses the global MathSpeechConverter instance
-
-    Args:
-        text: Input text containing LaTeX math
-        speak_math: If True, convert math to speech; if False, say "equation"
-
-    Returns:
-        Text ready for TTS
-    """
-    return _math_speech_converter.make_speakable_text(text, speak_math)
-
-
-def convert_math_to_speech(tex: str) -> str:
-    """
-    Convenience function to convert single math expression to speech
-
-    Args:
-        tex: LaTeX math expression
-
-    Returns:
-        Spoken English version
-    """
-    return _math_speech_converter.convert_math_to_speech(tex)
