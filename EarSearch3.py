@@ -2,6 +2,7 @@
 # === SUPPRESS HARMLESS WARNINGS ===
 # Add to your existing warning suppression
 import warnings
+
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -12,8 +13,10 @@ warnings.filterwarnings("ignore", message=".*overflow encountered.*")
 
 # Also set numpy to ignore specific warnings
 import numpy as np
+
 np.seterr(over='ignore', under='ignore', invalid='ignore')
 from dotenv import load_dotenv
+
 load_dotenv()
 
 import os, json, threading, time, re, math
@@ -25,6 +28,7 @@ from tkinter import ttk, messagebox
 from io import BytesIO
 from PIL import Image, ImageTk
 import matplotlib
+
 # This uses two models and a different Json file and handles images as well
 # Look for the Json file  called Json2. You will need two models as per the Json file loaded into ollama
 # can read equations off paper and handwriting. Uses qwen_llmSearch2.py
@@ -104,8 +108,9 @@ class Item:
     pubdate: Optional[str] = None
     summary: Optional[str] = None
     image_urls: List[str] = field(default_factory=list)
-# === END DATACLASS ===
 
+
+# === END DATACLASS ===
 
 
 # ---------- Config ----------
@@ -361,7 +366,6 @@ class LatexWindow(tk.Toplevel):
         except Exception as e:
             self._log(f"[latex] set_scheme error: {e}")
 
-
     # ==================== WINDOW SIZE CONTROL METHODS ====================
 
     def _increase_size(self):
@@ -451,7 +455,6 @@ class LatexWindow(tk.Toplevel):
         except Exception as e:
             self._log(f"[latex] append error: {e} — plain text fallback")
             self.textview.insert("end", text, ("normal", "tight"))
-
 
     def _block_keys(self, e):
         """Block most keys except copy/select all"""
@@ -712,7 +715,7 @@ class LatexWindow(tk.Toplevel):
             self._log(f"[diag] diagnostics failed: {e}")
 
 
-#End Latex Window
+# End Latex Window
 # === Echo Engine ===
 class EchoEngine:
     """
@@ -724,8 +727,8 @@ class EchoEngine:
 
     def __init__(self):
         self.enabled = False
-        self.delay_ms = 180.0
-        self.intensity = 0.55  # 0..1
+        self.delay_ms = 144.0
+        self.intensity = 0.47  # 0..1
         self.dry = 0.70
 
     def _coeffs(self):
@@ -764,6 +767,7 @@ class EchoEngine:
         _write_wav(out_wav, y, sr)
         print(f"[ECHO DEBUG] File processing complete")
         return out_wav, sr
+
 
 class EchoWindow(tk.Toplevel):
     """Tiny control panel: Enable, Delay (ms), Intensity."""
@@ -821,6 +825,7 @@ class EchoWindow(tk.Toplevel):
         e.delay_ms = float(self.v_delay.get())
         e.intensity = float(self.v_inten.get())
 
+
 # === Avatar Windows ===
 class CircleAvatarWindow(tk.Toplevel):
     LEVELS = 32
@@ -844,7 +849,8 @@ class CircleAvatarWindow(tk.Toplevel):
         self.start_color_timer()
 
     def show(self):
-        self.deiconify(); self.lift()
+        self.deiconify();
+        self.lift()
 
     def hide(self):
         self.withdraw()
@@ -879,7 +885,7 @@ class CircleAvatarWindow(tk.Toplevel):
         i %= 6
         r, g, b = [(v, t, p), (q, v, p), (p, v, t),
                    (p, q, v), (t, p, v), (v, p, q)][i]
-        return "#%02x%02x%02x" % (int(r*255), int(g*255), int(b*255))
+        return "#%02x%02x%02x" % (int(r * 255), int(g * 255), int(b * 255))
 
     def _ring_color(self, k, rings):
         t = (time.perf_counter() - self._t0) * 0.05
@@ -910,23 +916,24 @@ class CircleAvatarWindow(tk.Toplevel):
             self.canvas.create_oval(cx - rk, cy - rk, cx + rk, cy + rk,
                                     outline=col, width=stroke)
 
+
 class RectAvatarWindow(tk.Toplevel):
     LEVELS = 32
     BG = "#000000"
 
     # --- visual tuning ---
-    MAX_PARTICLES     = 450
-    SPAWN_AT_MAX_LVL  = 60
-    RECT_MIN_LEN_F    = 0.03
-    RECT_MAX_LEN_F    = 0.22
-    RECT_THICK_F      = 0.012
-    RECT_LIFETIME     = 0.9
-    DRIFT_PIX_F       = 0.01
+    MAX_PARTICLES = 450
+    SPAWN_AT_MAX_LVL = 60
+    RECT_MIN_LEN_F = 0.03
+    RECT_MAX_LEN_F = 0.22
+    RECT_THICK_F = 0.012
+    RECT_LIFETIME = 0.9
+    DRIFT_PIX_F = 0.01
 
     # spawn shaping (few at low volume, many at high)
-    LEVEL_DEADZONE    = 2
-    SPAWN_GAMMA       = 1.8
-    MIN_SPAWN         = 0
+    LEVEL_DEADZONE = 2
+    SPAWN_GAMMA = 1.8
+    MIN_SPAWN = 0
 
     def __init__(self, master):
         super().__init__(master)
@@ -957,7 +964,8 @@ class RectAvatarWindow(tk.Toplevel):
         super().destroy()
 
     def show(self):
-        self.deiconify(); self.lift()
+        self.deiconify();
+        self.lift()
 
     def hide(self):
         self.withdraw()
@@ -967,11 +975,14 @@ class RectAvatarWindow(tk.Toplevel):
 
     # color util
     def _hsv_to_hex(self, h, s, v):
-        i = int(h * 6); f = h * 6 - i
-        p = v * (1 - s); q = v * (1 - f * s); t = v * (1 - (1 - f) * s)
+        i = int(h * 6);
+        f = h * 6 - i
+        p = v * (1 - s);
+        q = v * (1 - f * s);
+        t = v * (1 - (1 - f) * s)
         i %= 6
         r, g, b = [(v, t, p), (q, v, p), (p, v, t), (p, q, v), (t, p, v), (v, p, q)][i]
-        return "#%02x%02x%02x" % (int(r*255), int(g*255), int(b*255))
+        return "#%02x%02x%02x" % (int(r * 255), int(g * 255), int(b * 255))
 
     def _spawn_count(self):
         if self.level <= self.LEVEL_DEADZONE:
@@ -985,23 +996,28 @@ class RectAvatarWindow(tk.Toplevel):
     def _spawn(self, n):
         cw = max(1, self.canvas.winfo_width())
         ch = max(1, self.canvas.winfo_height())
-        if cw <= 2*self.pad or ch <= 2*self.pad: return
+        if cw <= 2 * self.pad or ch <= 2 * self.pad: return
 
         min_len = max(6, int(cw * self.RECT_MIN_LEN_F))
-        max_len = max(min_len+4, int(cw * self.RECT_MAX_LEN_F))
-        thick   = max(3, int(ch * self.RECT_THICK_F))
+        max_len = max(min_len + 4, int(cw * self.RECT_MAX_LEN_F))
+        thick = max(3, int(ch * self.RECT_THICK_F))
         drift_p = max(1, int(min(cw, ch) * self.DRIFT_PIX_F))
 
         now = time.perf_counter()
         for _ in range(n):
             cx = np.random.randint(self.pad, cw - self.pad)
             cy = np.random.randint(self.pad, ch - self.pad)
-            L  = np.random.randint(min_len, max_len)
-            x1 = max(self.pad, cx - L//2); x2 = min(cw - self.pad, cx + L//2)
-            y1 = max(self.pad, cy - thick//2); y2 = min(ch - self.pad, cy + thick//2)
-            vx = np.random.randint(-drift_p, drift_p); vy = np.random.randint(-drift_p, drift_p)
+            L = np.random.randint(min_len, max_len)
+            x1 = max(self.pad, cx - L // 2);
+            x2 = min(cw - self.pad, cx + L // 2)
+            y1 = max(self.pad, cy - thick // 2);
+            y2 = min(ch - self.pad, cy + thick // 2)
+            vx = np.random.randint(-drift_p, drift_p);
+            vy = np.random.randint(-drift_p, drift_p)
             col = self._hsv_to_hex(np.random.random(), 0.95, 1.0)
-            self._particles.append({"x1":x1,"y1":y1,"x2":x2,"y2":y2,"vx":vx,"vy":vy,"birth":now,"life":self.RECT_LIFETIME,"color":col})
+            self._particles.append(
+                {"x1": x1, "y1": y1, "x2": x2, "y2": y2, "vx": vx, "vy": vy, "birth": now, "life": self.RECT_LIFETIME,
+                 "color": col})
 
         if len(self._particles) > self.MAX_PARTICLES:
             self._particles = self._particles[-self.MAX_PARTICLES:]
@@ -1024,14 +1040,17 @@ class RectAvatarWindow(tk.Toplevel):
         spawn = self._spawn_count()
         if spawn > 0: self._spawn(spawn)
 
-        cw = max(1, self.canvas.winfo_width()); ch = max(1, self.canvas.winfo_height())
+        cw = max(1, self.canvas.winfo_width());
+        ch = max(1, self.canvas.winfo_height())
         self.canvas.delete("all")
         alive = []
         for p in self._particles:
             age = now - p["birth"]
             if age > p["life"]: continue
-            p["x1"] += p["vx"] * dt; p["x2"] += p["vx"] * dt
-            p["y1"] += p["vy"] * dt; p["y2"] += p["vy"] * dt
+            p["x1"] += p["vx"] * dt;
+            p["x2"] += p["vx"] * dt
+            p["y1"] += p["vy"] * dt;
+            p["y2"] += p["vy"] * dt
             pad = self.pad
             if p["x1"] < pad: s = pad - p["x1"]; p["x1"] += s; p["x2"] += s
             if p["x2"] > cw - pad: s = (cw - pad) - p["x2"]; p["x1"] += s; p["x2"] += s
@@ -1040,7 +1059,7 @@ class RectAvatarWindow(tk.Toplevel):
 
             t = age / p["life"]
             stipples = ("", "gray12", "gray25", "gray50", "gray75")
-            idx = min(len(stipples)-1, int(t * (len(stipples))))
+            idx = min(len(stipples) - 1, int(t * (len(stipples))))
             stipple = stipples[idx]
             self.canvas.create_rectangle(int(p["x1"]), int(p["y1"]), int(p["x2"]), int(p["y2"]),
                                          fill=p["color"], outline=p["color"],
@@ -1336,6 +1355,7 @@ class RectAvatarWindow2(RectAvatarWindow):
         self._update_window_size()
         self.log_scale_change()
 
+
 # === WEB SEARCH WINDOW CLASS ===
 class WebSearchWindow(tk.Toplevel):
     def __init__(self, master, log_fn=None):
@@ -1480,8 +1500,6 @@ class WebSearchWindow(tk.Toplevel):
             else:
                 print(error_msg)
 
-
-
     def copy_raw_latex(self):
         """Copy raw LaTeX to clipboard"""
         self._ensure_latex_window()
@@ -1516,7 +1534,6 @@ class WebSearchWindow(tk.Toplevel):
                 self.logln(f"[latex] preview error ({context}): {e}")
 
         self.master.after(0, _go)
-
 
     def _build_strip_lights(self):
         self.strip_canvas = tk.Canvas(self, highlightthickness=0, bg="white")
@@ -1720,7 +1737,6 @@ class WebSearchWindow(tk.Toplevel):
 
         return final_text.strip()
 
-
     def _poll_queue(self):
         try:
             while True:
@@ -1801,8 +1817,6 @@ class WebSearchWindow(tk.Toplevel):
 
         # Preview the ACCUMULATED content (all results so far)
         self.preview_latex(self._accumulated_latex_content)
-
-
 
     def _show_images(self, urls: List[str], article_title: str, article_url: str):
         try:
@@ -1920,7 +1934,6 @@ class WebSearchWindow(tk.Toplevel):
         super().destroy()
 
 
-
 # === END WEB SEARCH WINDOW ===
 #
 
@@ -1967,7 +1980,6 @@ class App:
         self.sleep_mode = False
         self.sleep_commands = ["sleep", "go to sleep", "rest mode", "silence", "stop listening"]
         self.wake_commands = ["wake", "wake up", "awaken", "resume", "start listening", "listen again"]
-
 
         self.master = master
         master.title("Always Listening — Qwen (local)")
@@ -2062,6 +2074,10 @@ class App:
         # Label above the buttons
         ttk.Label(mute_frame, text="Mute:", font=("Segoe UI", 9)).pack(anchor="w")
 
+        # Close Windows button -
+        ttk.Button(top, text="Close Windows", command=self.close_all_windows).grid(row=2, column=9, padx=6)
+
+
         # Button container
         mute_buttons_frame = ttk.Frame(mute_frame)
         mute_buttons_frame.pack(fill="x", pady=(2, 0))
@@ -2086,7 +2102,6 @@ class App:
 
         # Initialize button states
         self.update_mute_buttons()
-
 
         # Echo controls
         ttk.Checkbutton(
@@ -2356,7 +2371,6 @@ DO NOT:
         self.qwen.system_prompt = enhanced_system_prompt
         self.logln(f"[qwen] ✅ System prompt updated with balanced time awareness")
 
-
         self.logln(f"[qwen] 📅 Current date in system: {current_date} at {current_time}")
 
     def _apply_config_defaults(self):
@@ -2450,7 +2464,7 @@ DO NOT:
     def update_speak_math_setting(self):
         """Update the speak math setting - can be called when the checkbox changes"""
         self.logln(f"[math] Speak math: {self.speak_math_var.get()}")
-        
+
     # === NEW: Unified Vision State Manager ===
     def _update_vision_state(self, used_turn: bool = False, reset: bool = False, new_image: bool = False):
         """Thread-safe vision state management"""
@@ -2625,7 +2639,7 @@ DO NOT:
                 else:
                     target_win = self.ensure_latex_window("text")
 
-               # self.master.after(0, target_win._prepare_word_spans)
+                # self.master.after(0, target_win._prepare_word_spans)
                 play_path = self.cfg["out_wav"]
                 if bool(self.echo_enabled_var.get()):
                     try:
@@ -2640,8 +2654,7 @@ DO NOT:
             self.set_light("idle")
             self._latex_theme("default")
 
-
-            #end query
+            # end query
 
     def mute_text_ai(self):
         """Mute Text AI audio output - prevents Text AI TTS"""
@@ -2727,8 +2740,6 @@ DO NOT:
         except Exception as e:
             self.logln(f"[latex] Clear error: {e}")
 
-
-
     # === FIXED: ask_vision ===
     def ask_vision(self, image_path: str, prompt: str):
         """Called by ImageWindow when the user presses 'Ask model'."""
@@ -2736,7 +2747,6 @@ DO NOT:
         # remember the most recent image explicitly
         self._last_image_path = image_path
         self._update_vision_state(new_image=True)
-
 
         def _worker():
             try:
@@ -2861,10 +2871,6 @@ DO NOT:
 
         return response
 
-
-
-
-
     # === ENHANCED: pass_vision_to_text ===
     def pass_vision_to_text(self):
         """
@@ -2911,7 +2917,6 @@ DO NOT:
                 self.logln("[auto-send] No text to send")
         except Exception as e:
             self.logln(f"[auto-send] error: {e}")
-
 
     def _set_last_vision_reply(self, reply: str):
         """Store the most recent vision reply and log a concise confirmation."""
@@ -3030,8 +3035,6 @@ DO NOT:
         except Exception as e:
             self.logln(f"[send-to-text] error: {e}")
 
-
-
     # === Core Application Methods ===
     def ensure_latex_window(self, context="text"):
         """Get or create the appropriate LaTeX window for each context"""
@@ -3075,7 +3078,6 @@ DO NOT:
                 self.latex_win_search.title("Search Results - LaTeX Preview")
             return self.latex_win_search
 
-
     def start(self):
         if self.running: return
         self.running = True
@@ -3087,7 +3089,6 @@ DO NOT:
         self._sync_echo_state()
 
         threading.Thread(target=self.loop, daemon=True).start()
-
 
     def stop(self):
         self.running = False
@@ -3362,7 +3363,6 @@ DO NOT:
                 if role == "vision":
                     self._latex_theme("default")
 
-
         self.stop()
 
     # === Voice/Audio Methods ===
@@ -3390,6 +3390,7 @@ DO NOT:
         except Exception as e:
             self.logln(f"[bargein_mic] Failed to start: {e}")
             return None, deque(maxlen=64)
+
     def monitor_interrupt(self):
         import numpy as _np, time as _time
         threshold_interrupt = self.cfg.get("bargein_threshold", 1500)
@@ -3496,6 +3497,7 @@ DO NOT:
                 self._duck_active = False
                 self.master.after(0, self._update_duck_ui)
                 _time.sleep(dt)
+
     def _update_duck_ui(self):
         try:
             g = float(getattr(self, '_duck_gain', 1.0))
@@ -3608,8 +3610,6 @@ DO NOT:
         except Exception as e:
             self.logln(f"[search-status] synthesis error: {e}")
 
-
-
     def play_wav_with_interrupt(self, path, token=None):
         import platform as _plat
         start_time = time.monotonic()
@@ -3658,7 +3658,6 @@ DO NOT:
             SILENCE_MAX_BLOCKS = 20
             cursor = 0
 
-
             def run_stream():
                 nonlocal cursor, fs, data, blocksize, latency_hint, out_dev, extra
                 silent_blocks = 0
@@ -3706,7 +3705,7 @@ DO NOT:
                         else:
                             silent_blocks = 0
 
-                   # self._tts_silent = bool(avg_abs < SILENCE_THRESH)
+                    # self._tts_silent = bool(avg_abs < SILENCE_THRESH)
                     env = min(max(avg_abs * 4.0, 0.0), 1.0) ** 0.6
                     AVATAR_LEVELS = 32
                     level = int(env * (AVATAR_LEVELS - 1) + 1e-6)
@@ -3721,7 +3720,8 @@ DO NOT:
                         raise sd.CallbackStop()
 
                     cursor = end
-                   #self._tts_cursor_samples = int(cursor)
+
+                # self._tts_cursor_samples = int(cursor)
 
                 def open_stream(extra_settings, device_idx):
                     return sd.OutputStream(
@@ -3751,7 +3751,7 @@ DO NOT:
                     ctx = open_stream(None, chosen_dev)
 
                 with ctx:
-                   # self.master.after(0, _ui_progress_tick)
+                    # self.master.after(0, _ui_progress_tick)
                     while self.running and not self.interrupt_flag and cursor < data.shape[0]:
                         if cursor == last_cursor_check:
                             stall_ticks += 1
@@ -3788,7 +3788,8 @@ DO NOT:
             self._beep_once_guard = False
             dur = time.monotonic() - start_time
             self.logln(f"[audio] playback done ({dur:.2f}s)")
-# Route Commands
+
+    # Route Commands
     def _route_command(self, raw_text: str) -> bool:
         """
         Handle voice/typed control phrases robustly.
@@ -3868,10 +3869,11 @@ DO NOT:
             self.toggle_vision_ai_mute()
             return True
 
+
         # === SEARCH VOICE COMMANDS ===
         search_commands = [
-            "search for", "search", "look up","information on", "find information about",
-            "web search", "search the web for", "look for","That's for","database","online"
+            "search for", "search", "look up", "information on", "find information about",
+            "web search", "search the web for", "look for", "That's for", "database", "online"
             # Removed standalone "find" - this was causing the problem
         ]
 
@@ -3951,12 +3953,18 @@ DO NOT:
             "send", "send to text", "send to zen", "send information", "send that",
             "ok send that", "pass to text", "pass to zen", "transfer to text", "send to test",
             "give to zen", "forward to text", "share with zen", "send that to text",
-            "send it to text", "pass it to test", "send this to text", "pass this to text","ok push"
+            "send it to text", "pass it to test", "send this to text", "pass this to text", "ok push"
         ]
 
         stop_commands = [
             "stop", "stop speaking", "stop talking", "be quiet", "shut up",
-            "enough", "that's enough", "okay stop", "ok stop","fuck off"
+            "enough", "that's enough", "okay stop", "ok stop", "fuck off"
+        ]
+
+        # Close windows commands
+        close_windows_commands = [
+            "close window", "close all windows", "hide windows", "minimize windows",
+            "clean up windows", "tidy windows", "close extra windows", "clean desktop"
         ]
 
         debug_commands = [
@@ -4112,11 +4120,51 @@ DO NOT:
             self.debug_vision_state()
             self.set_light("idle")
             return True
+        # Close windows command
+        if matched(close_windows_commands):
+            self.logln(f"[command] Close windows command detected: '{text}'")
+            self.close_all_windows()
+            return True
+
 
         return False
+
     # routine ends here
 
     # === Awaken and Sleep Methods ===
+    def close_all_windows(self):
+        """Close all secondary windows except avatar and main window"""
+        windows_closed = 0
+
+        # List of windows to close
+        windows_to_close = [
+            'latex_win_text', 'latex_win_vision', 'latex_win_search', 'latex_win',
+            'search_win', '_img_win', '_echo_win'
+        ]
+
+        for window_name in windows_to_close:
+            window = getattr(self, window_name, None)
+            if window and hasattr(window, 'winfo_exists') and window.winfo_exists():
+                try:
+                    if hasattr(window, 'hide'):
+                        window.hide()
+                    elif hasattr(window, 'withdraw'):
+                        window.withdraw()
+                    else:
+                        window.iconify()  # minimize as fallback
+                    windows_closed += 1
+
+                    # Stop camera if image window is open
+                    if window_name == '_img_win' and hasattr(window, 'stop_camera'):
+                        window.stop_camera()
+
+                except Exception as e:
+                    self.logln(f"[close] Error closing {window_name}: {e}")
+
+        self.logln(f"[close] Closed {windows_closed} windows (avatar remains open)")
+        self.play_chime(freq=660, ms=120, vol=0.15)  # Confirmation beep
+        return windows_closed
+
 
     def enter_sleep_mode(self):
         """Enter sleep mode - ignore all voice input"""
@@ -4125,7 +4173,8 @@ DO NOT:
             self.set_light("idle")
             self.logln("[sleep] 💤 Sleep mode activated - ignoring voice input")
             self.play_sleep_chime()
-
+            #  Close all windows when entering sleep mode
+            windows_closed = self.close_all_windows()
             # Optional: Show sleep status in UI
             try:
                 self.master.title("Always Listening — Qwen (SLEEPING)")
@@ -4195,8 +4244,6 @@ DO NOT:
 
         except Exception as e:
             self.logln(f"[sleep-reminder] error: {e}")
-
-
 
     def play_wake_chime(self):
         """Play wake confirmation chime"""
@@ -4708,8 +4755,6 @@ DO NOT:
 
         self.master.after(0, _go)
 
-
-
     def preview_search_results(self, content: str):
         """Special method for search results that preserves the display"""
         self.preview_latex(content, context="search")
@@ -4764,8 +4809,6 @@ DO NOT:
         # Rest of your existing synthesize_to_wav code...
         import time
         engine = self.tts_engine.get()
-
-
 
         # Enhanced file locking protection
         tmp = out_wav + ".tmp.wav"
@@ -4853,6 +4896,7 @@ DO NOT:
                     return False
 
         return False
+
     # === Device Methods ===
     def _device_hostapi_name(self, index):
         try:
@@ -5406,9 +5450,6 @@ DO NOT:
             meaningful_lines = [line.strip() for line in lines if len(line.strip()) > 40][:8]
             return "## CONTENT OVERVIEW\n" + "\n".join([f"- {line}" for line in meaningful_lines])
 
-
-
-
     def summarise_with_qwen(self, text: str, url: str, pubdate: str):
         text = text[:20000]  # Limit text length
         pd_line = f"(Publish/Update date: {pubdate})\n" if pubdate else ""
@@ -5479,7 +5520,6 @@ DO NOT:
             except Exception as e:
                 return f"Summarization failed: {e}"
 
-
     def extract_images(self, html: str, base_url: str, limit: int = 3):
         urls = []
         try:
@@ -5522,7 +5562,7 @@ DO NOT:
                 self.preview_search_results(text)
 
                 # Continue with TTS...
-                #clean = clean_for_tts(reply, speak_math=self.speak_math_var.get())
+                # clean = clean_for_tts(reply, speak_math=self.speak_math_var.get())
                 output_path = "out/search_results.wav"
 
                 if self.synthesize_to_wav(clean_tts_text, output_path, role="text"):
@@ -5554,10 +5594,7 @@ DO NOT:
         tts_thread = threading.Thread(target=_tts_worker, daemon=True)
         tts_thread.start()
 
-
-
-
-#End syththesise_search
+    # End syththesise_search
 
     def play_search_results(self, path: str, token=None):
         """Play search results audio with proper interrupt support"""
@@ -5597,7 +5634,7 @@ DO NOT:
 
 
 # === END SEARCH METHODS ===
-#End of App
+# End of App
 # Helper functions for EchoEngine
 def _read_wav_mono(path):
     x, sr = sf.read(path)
