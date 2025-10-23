@@ -332,32 +332,21 @@ class LatexWindow(tk.Toplevel):
 
     def set_scheme(self, scheme: str):
         """
-        Switch frame color for vision mode while keeping content dark.
-        Called by App._latex_theme() for visual distinction.
+        Simplified scheme method - no visual changes for vision mode
         """
         try:
+            # Keep everything in default dark theme regardless of mode
+            self.configure(bg=self.dark_bg)
+            self.textview.tag_configure("speak", background=self.dark_highlight, foreground=self.dark_bg)
+
             if scheme == "vision":
-                # Vision mode: Blue frame, same dark content
-                vision_frame = "#1a3a5a"  # Dark blue frame
-                self.configure(bg=vision_frame)
-
-                # Optional: Slightly different highlight for vision mode
-                vision_highlight = "#4a86e8"  # Blue highlight
-                self.textview.tag_configure("speak", background=vision_highlight, foreground=self.dark_bg)
-
-                self._log("[latex] Frame set to VISION mode (blue)")
-
+                self._log("[latex] Vision mode - using default dark theme")
             else:
-                # Default mode: Black frame
-                self.configure(bg=self.dark_bg)
-
-                # Default highlight
-                self.textview.tag_configure("speak", background=self.dark_highlight, foreground=self.dark_bg)
-
-                self._log("[latex] Frame set to DEFAULT mode (black)")
+                self._log("[latex] Default mode - dark theme")
 
         except Exception as e:
             self._log(f"[latex] set_scheme error: {e}")
+
 
     # ==================== WINDOW SIZE CONTROL METHODS ====================
 
@@ -386,6 +375,69 @@ class LatexWindow(tk.Toplevel):
         return 800, 600  # Default size
 
     # ==================== UI HELPER METHODS ====================
+    def append_document(self, text, wrap=900, separator="\n" + "=" * 50 + "\n"):
+        """Append content to the existing document instead of replacing it"""
+        if not text:
+            return
+
+        # Store the combined text for raw LaTeX copying
+        if self._last_text:
+            self._last_text += separator + text
+        else:
+            self._last_text = text
+
+        try:
+            # Get current content
+            current_content = self.textview.get("1.0", "end-1c")
+
+            # Add separator if there's existing content
+            if current_content.strip():
+                self.textview.insert("end", separator)
+
+            # Process and append new content
+            blocks = self.split_text_math(text)
+            raw_mode = bool(self.show_raw.get())
+
+            for kind, content in blocks:
+                if kind == "text":
+                    self.textview.insert("end", content, ("normal", "tight"))
+                    continue
+                if raw_mode:
+                    self.textview.insert("end", f" \\[{content}\\] ", ("normal", "tight"))
+                    continue
+                try:
+                    inline = self._is_inline_math(content)
+                    fsz = max(6, self.math_pt - 2) if inline else self.math_pt
+                    png = self.render_png_bytes(content, fontsize=fsz)
+                    img = Image.open(BytesIO(png)).convert("RGBA")
+                    bbox = img.getbbox()
+                    if bbox:
+                        img = img.crop(bbox)
+                    max_w = max(450, int(self.winfo_width() * 0.85))
+                    if img.width > max_w:
+                        scale = max_w / img.width
+                        img = img.resize((int(img.width * scale), int(img.height * scale)), Image.LANCZOS)
+                    photo = ImageTk.PhotoImage(img)
+                    self._img_refs.append(photo)
+                    if inline:
+                        self.textview.image_create("end", image=photo, align="baseline")
+                    else:
+                        self.textview.insert("end", "\n", ("tight",))
+                        self.textview.image_create("end", image=photo, align="center")
+                        self.textview.insert("end", "\n", ("tight",))
+                except Exception as e:
+                    self._log(f"[latex] render error (block): {e} — raw fallback")
+                    self.textview.insert("end", f" \\[{content}\\] ", ("normal", "tight"))
+            self.textview.insert("end", "\n")
+            self._prepare_word_spans()
+
+            # Auto-scroll to bottom
+            self.textview.see("end")
+
+        except Exception as e:
+            self._log(f"[latex] append error: {e} — plain text fallback")
+            self.textview.insert("end", text, ("normal", "tight"))
+
 
     def _block_keys(self, e):
         """Block most keys except copy/select all"""
@@ -1382,15 +1434,39 @@ class WebSearchWindow(tk.Toplevel):
             )
 
     def toggle_latex(self):
-        """Toggle LaTeX window visibility"""
-        self._ensure_latex_window()
+        """Toggle LaTeX window using main app's system"""
         try:
-            if self.latex_win.state() == "withdrawn":
-                self.latex_win.show()
+            if hasattr(self, 'main_app') and self.main_app:
+                self.main_app.toggle_latex()
+            elif hasattr(self, 'master') and hasattr(self.master, 'ensure_latex_window'):
+                latex_win = self.master.ensure_latex_window("search")
+                if latex_win.state() == "withdrawn":
+                    latex_win.show()
+                else:
+                    latex_win.hide()
+        except Exception as e:
+            error_msg = f"[search] toggle latex error: {e}"
+            if hasattr(self, 'logln'):
+                self.logln(error_msg)
             else:
-                self.latex_win.hide()
-        except Exception:
-            self.latex_win.show()
+                print(error_msg)
+
+    def copy_raw_latex(self):
+        """Copy raw LaTeX using main app's system"""
+        try:
+            if hasattr(self, 'main_app') and self.main_app:
+                self.main_app.latex_win_search.copy_raw_latex()
+            elif hasattr(self, 'master') and hasattr(self.master, 'ensure_latex_window'):
+                latex_win = self.master.ensure_latex_window("search")
+                latex_win.copy_raw_latex()
+        except Exception as e:
+            error_msg = f"[search] copy raw failed: {e}"
+            if hasattr(self, 'logln'):
+                self.logln(error_msg)
+            else:
+                print(error_msg)
+
+
 
     def copy_raw_latex(self):
         """Copy raw LaTeX to clipboard"""
@@ -1400,21 +1476,33 @@ class WebSearchWindow(tk.Toplevel):
         except Exception as e:
             self._log(f"[latex] copy raw failed: {e}")
 
-    def preview_latex(self, content: str):
-        """Preview LaTeX content using the same routine as main app"""
+    def preview_latex(self, content: str, context="text"):
+        """Preview LaTeX content with append/replace option"""
         if not self.latex_auto.get():
             return
 
-        self._ensure_latex_window()
-
         def _go():
             try:
-                self.latex_win.show()
-                self.latex_win.show_document(content)
-            except Exception as e:
-                self._log(f"[latex] preview error: {e}")
+                latex_win = self.ensure_latex_window(context)
+                latex_win.show()
 
-        self.after(0, _go)
+                # === CHECK APPEND MODE ===
+                if self.latex_append_mode.get():
+                    # APPEND MODE - add to existing content
+                    latex_win.append_document(content)
+                    self.logln(f"[latex] 📝 Appended to {context} window")
+                else:
+                    # REPLACE MODE - clear and show new content (original behavior)
+                    latex_win.show_document(content)
+                    self.logln(f"[latex] 🔄 Showing in {context} window (replace mode)")
+
+                self._current_latex_context = context
+
+            except Exception as e:
+                self.logln(f"[latex] preview error ({context}): {e}")
+
+        self.master.after(0, _go)
+
 
     def _build_strip_lights(self):
         self.strip_canvas = tk.Canvas(self, highlightthickness=0, bg="white")
@@ -1881,6 +1969,8 @@ class App:
         # === NEW: Unified playback fencing ===
         self._play_lock = threading.Lock()
         self._play_token = 0
+        # === Append Mode ====
+        self.latex_append_mode = tk.BooleanVar(value=False)
 
         # --- UI State ---
         self.state = tk.StringVar(value="idle")
@@ -1914,6 +2004,11 @@ class App:
         self._vision_context_until = 0.0
         self._vision_turns_left = 0
 
+        # Muting control
+        self.text_ai_muted = False
+        self.vision_ai_muted = False
+
+        self._mute_lock = threading.Lock()
         # === Initialize UI components FIRST ===
         self._setup_ui()
 
@@ -1945,6 +2040,39 @@ class App:
         # STOP SPEAKING button
         self.stop_speech_btn = ttk.Button(top, text="Stop Speaking", command=self.stop_speaking)
         self.stop_speech_btn.grid(row=0, column=3, padx=6)
+        # === MUTE CONTROLS ===
+        # Add this after your existing buttons in the top row
+        mute_frame = ttk.Frame(top)
+        mute_frame.grid(row=0, column=14, padx=6, sticky="w")  # Adjust column number as needed
+
+        # Label above the buttons
+        ttk.Label(mute_frame, text="Mute:", font=("Segoe UI", 9)).pack(anchor="w")
+
+        # Button container
+        mute_buttons_frame = ttk.Frame(mute_frame)
+        mute_buttons_frame.pack(fill="x", pady=(2, 0))
+
+        # Text AI mute button
+        self.text_mute_btn = ttk.Button(
+            mute_buttons_frame,
+            text="🔇 Text",
+            width=8,
+            command=self.toggle_text_ai_mute
+        )
+        self.text_mute_btn.pack(side="left", padx=(0, 3))
+
+        # Vision AI mute button
+        self.vision_mute_btn = ttk.Button(
+            mute_buttons_frame,
+            text="🔇 Vision",
+            width=8,
+            command=self.toggle_vision_ai_mute
+        )
+        self.vision_mute_btn.pack(side="left")
+
+        # Initialize button states
+        self.update_mute_buttons()
+
 
         # Echo controls
         ttk.Checkbutton(
@@ -1960,6 +2088,7 @@ class App:
         ttk.Button(_imgbar, text="Pass to Text AI", command=self.pass_vision_to_text).pack(side="left", padx=(6, 0))
         # Manual Refresh
         ttk.Button(_imgbar, text="Refresh Last Reply", command=self._refresh_last_reply).pack(side="left", padx=(6, 0))
+
         # LaTeX controls
         self.latex_auto = tk.BooleanVar(value=True)
         ttk.Checkbutton(top, text="Auto LaTeX preview", variable=self.latex_auto).grid(row=0, column=7, padx=6)
@@ -1969,7 +2098,11 @@ class App:
             command=lambda: self.latex_win.copy_raw_latex() if hasattr(self, "latex_win") else None
         ).grid(row=0, column=9, padx=(0, 6))
 
-        ttk.Button(top, text="Web Search", command=self.toggle_search_window).grid(row=0, column=13, padx=6)
+        # === Latex append controls ===
+        ttk.Checkbutton(top, text="Append LaTeX", variable=self.latex_append_mode).grid(row=2, column=7, padx=6)
+        ttk.Button(top, text="Clear LaTeX", command=self.clear_latex).grid(row=2, column=8, padx=5)
+
+
         # Avatar
         self.avatar_win = None
         self.avatar_kind = tk.StringVar(value="Rings")
@@ -2405,12 +2538,15 @@ DO NOT:
     # === FIXED: handle_text_query ===
     def handle_text_query(self, text):
         self.logln(f"[user] {text}")
-        self._sync_image_context_from_window()
 
-        # Route camera/image commands first
+        # === COMMAND ROUTING SHOULD BE FIRST ===
+        # Route camera/image commands first - BEFORE any AI processing
         if self._route_command(text):
             self.logln(f"[DEBUG] Command routed, returning early")
             return
+        # === END COMMAND ROUTING ===
+
+        self._sync_image_context_from_window()
 
         # Route the user question to appropriate model
         try:
@@ -2468,7 +2604,7 @@ DO NOT:
                 else:
                     target_win = self.ensure_latex_window("text")
 
-                self.master.after(0, target_win._prepare_word_spans)
+               # self.master.after(0, target_win._prepare_word_spans)
                 play_path = self.cfg["out_wav"]
                 if bool(self.echo_enabled_var.get()):
                     try:
@@ -2486,13 +2622,100 @@ DO NOT:
 
             #end query
 
+    def mute_text_ai(self):
+        """Mute Text AI audio output - prevents Text AI TTS"""
+        with self._mute_lock:
+            self.text_ai_muted = True
+            self.logln("[mute] 🔇 Text AI audio muted - will not speak")
+            self.update_mute_buttons()
+
+    def unmute_text_ai(self):
+        """Unmute Text AI audio output - allows Text AI TTS"""
+        with self._mute_lock:
+            self.text_ai_muted = False
+            self.logln("[mute] 🔊 Text AI audio unmuted - can speak again")
+            self.update_mute_buttons()
+
+    def mute_vision_ai(self):
+        """Mute Vision AI audio output - prevents Vision AI TTS"""
+        with self._mute_lock:
+            self.vision_ai_muted = True
+            self.logln("[mute] 🔇 Vision AI audio muted - will not speak")
+            self.update_mute_buttons()
+
+    def unmute_vision_ai(self):
+        """Unmute Vision AI audio output - allows Vision AI TTS"""
+        with self._mute_lock:
+            self.vision_ai_muted = False
+            self.logln("[mute] 🔊 Vision AI audio unmuted - can speak again")
+            self.update_mute_buttons()
+
+    def toggle_text_ai_mute(self):
+        """Toggle Text AI mute state - button command"""
+        with self._mute_lock:
+            self.text_ai_muted = not self.text_ai_muted
+            state = "muted" if self.text_ai_muted else "unmuted"
+            self.logln(f"[mute] {'🔇' if self.text_ai_muted else '🔊'} Text AI {state}")
+            self.update_mute_buttons()
+
+    def update_mute_buttons(self):
+        """Update mute button appearance based on current mute state"""
+        try:
+            # Update Text AI button - shows OPPOSITE state (click mute icon to mute)
+            if self.text_ai_muted:
+                self.text_mute_btn.config(text="🔊 Text")  # Shows UNMUTE symbol (currently muted)
+            else:
+                self.text_mute_btn.config(text="🔇 Text")  # Shows MUTE symbol (currently unmuted)
+
+            # Update Vision AI button - shows OPPOSITE state
+            if self.vision_ai_muted:
+                self.vision_mute_btn.config(text="🔊 Vision")  # Shows UNMUTE symbol (currently muted)
+            else:
+                self.vision_mute_btn.config(text="🔇 Vision")  # Shows MUTE symbol (currently unmuted)
+
+        except Exception as e:
+            # Fail silently if buttons don't exist yet (during initialization)
+            pass
+
+    def toggle_vision_ai_mute(self):
+        """Toggle Vision AI mute state - button command"""
+        with self._mute_lock:
+            self.vision_ai_muted = not self.vision_ai_muted
+            state = "muted" if self.vision_ai_muted else "unmuted"
+            self.logln(f"[mute] {'🔇' if self.vision_ai_muted else '🔊'} Vision AI {state}")
+            self.update_mute_buttons()
+
+    def clear_latex(self):
+        """Clear all LaTeX windows - called by Clear LaTeX button"""
+        try:
+            # Clear the main text window
+            if self.latex_win_text and self.latex_win_text.winfo_exists():
+                self.latex_win_text.clear()
+                self.logln("[latex] Text window cleared")
+
+            # Clear vision window if it exists
+            if self.latex_win_vision and self.latex_win_vision.winfo_exists():
+                self.latex_win_vision.clear()
+                self.logln("[latex] Vision window cleared")
+
+            # Clear search window if it exists
+            if self.latex_win_search and self.latex_win_search.winfo_exists():
+                self.latex_win_search.clear()
+                self.logln("[latex] Search window cleared")
+
+        except Exception as e:
+            self.logln(f"[latex] Clear error: {e}")
+
+
 
     # === FIXED: ask_vision ===
     def ask_vision(self, image_path: str, prompt: str):
         """Called by ImageWindow when the user presses 'Ask model'."""
+
         # remember the most recent image explicitly
         self._last_image_path = image_path
         self._update_vision_state(new_image=True)
+
 
         def _worker():
             try:
@@ -2624,20 +2847,18 @@ DO NOT:
     # === ENHANCED: pass_vision_to_text ===
     def pass_vision_to_text(self):
         """
-        If a vision reply exists, move it into the Text input box with proper formatting.
+        If a vision reply exists, move it into the Text input box and AUTO-SEND.
         """
         try:
-            # Get the last vision reply
             vision_reply = (getattr(self, '_last_vision_reply', "") or "").strip()
-
             if not vision_reply:
-                self.logln("[pass] nothing to pass from vision (no recent vision reply).")
+                self.logln("[pass] nothing to pass from vision")
                 return
 
             # Reset vision state
             self._update_vision_state(reset=True)
 
-            # Create formatted message (same as voice command)
+            # Create formatted message
             header = "The vision AI provided this information about an image:"
             formatted_message = f"{header}\n\n{vision_reply}\n\nPlease analyze this information, solve any problems mentioned, and discuss as necessary."
 
@@ -2647,15 +2868,29 @@ DO NOT:
             self.text_box.focus_set()
             self.text_box.see("end")
 
-            # Set cursor at the end for easy editing
-            self.text_box.mark_set("insert", "end-1c")
+            self.logln(f"[pass] vision information sent to Text AI - AUTO-SENDING")
 
-            self.logln(f"[pass] vision information sent to Text AI ({len(vision_reply)} chars)")
+            # AUTO-SEND after a brief delay
+            self.master.after(500, self.auto_send_text)
 
         except Exception as e:
             self.logln(f"[pass] error: {e}")
-            import traceback
-            self.logln(f"[pass] traceback: {traceback.format_exc()}")
+
+    def auto_send_text(self):
+        """Automatically send the current text box content"""
+        try:
+            text = self.text_box.get("1.0", "end-1c").strip()
+            if text:
+                self.logln("[auto-send] Sending to Text AI...")
+                # Clear the text box to show it's being processed
+                self.text_box.delete("1.0", "end")
+                # Process the query
+                threading.Thread(target=self.handle_text_query, args=(text,), daemon=True).start()
+            else:
+                self.logln("[auto-send] No text to send")
+        except Exception as e:
+            self.logln(f"[auto-send] error: {e}")
+
 
     def _set_last_vision_reply(self, reply: str):
         """Store the most recent vision reply and log a concise confirmation."""
@@ -2741,30 +2976,19 @@ DO NOT:
 
     def _pass_vision_to_text_voice(self):
         """
-        Voice-activated version of pass_vision_to_text with proper messaging.
-        Called when user says "send as text", "send to zen", etc.
+        Voice-activated version with auto-send.
         """
         try:
-            # Get the last vision reply
             vision_reply = (getattr(self, '_last_vision_reply', "") or "").strip()
-
             if not vision_reply:
                 self.logln("[send-to-text] No recent vision reply to send.")
-                # Play a brief error tone
                 self.play_chime(freq=440, ms=200, vol=0.2)
                 return
-
-            # Wait for any file locks to clear before proceeding
-            wav_path = self.cfg["out_wav"]
-            if os.path.exists(wav_path):
-                if not self._wait_for_file_unlock(wav_path):
-                    self.logln("[send-to-text] File still locked, skipping audio operations")
-                    # Continue anyway, just without audio
 
             # Reset vision state
             self._update_vision_state(reset=True)
 
-            # Create a formatted message for the text AI
+            # Create formatted message
             header = "The vision AI provided this information about an image:"
             formatted_message = f"{header}\n\n{vision_reply}\n\nPlease analyze this information, solve any problems mentioned, and discuss as necessary."
 
@@ -2774,25 +2998,18 @@ DO NOT:
             self.text_box.focus_set()
             self.text_box.see("end")
 
-            # Set cursor at the end for easy editing
-            self.text_box.mark_set("insert", "end-1c")
+            self.logln(f"[send-to-text] Vision information sent to Text AI - AUTO-SENDING")
 
-            self.logln(f"[send-to-text] Vision information sent to Text AI ({len(vision_reply)} chars)")
+            # Play confirmation tone
+            self.play_chime(freq=880, ms=150, vol=0.15)
 
-            # Play confirmation tone (with file lock check)
-            try:
-                self.play_chime(freq=880, ms=150, vol=0.15)
-            except Exception as e:
-                self.logln(f"[send-to-text] chime play failed (non-critical): {e}")
-
-            # Optional: Auto-send after a delay for hands-free operation
-            if self.cfg.get("auto_send_after_voice_transfer", False):
-                self.master.after(1000, self.send_text)  # 1 second delay
+            # AUTO-SEND after a brief delay
+            self.master.after(800, self.auto_send_text)  # Slightly longer delay for voice
 
         except Exception as e:
             self.logln(f"[send-to-text] error: {e}")
-            import traceback
-            self.logln(f"[send-to-text] traceback: {traceback.format_exc()}")
+
+
 
     # === Core Application Methods ===
     def ensure_latex_window(self, context="text"):
@@ -3069,8 +3286,6 @@ DO NOT:
                 else:
                     self._barge_latched = False
 
-
-            # Handle vision/text routing
             try:
                 use_vision = self._should_use_vision_followup(text)
 
@@ -3108,11 +3323,11 @@ DO NOT:
 
             try:
                 if self.synthesize_to_wav(clean, self.cfg["out_wav"], role=role):
-                    self.master.after(0, self.latex_win._prepare_word_spans)
                     play_path = self.cfg["out_wav"]
                     if bool(self.echo_enabled_var.get()):
                         try:
-                            play_path, _ = self.echo_engine.process_file(self.cfg["out_wav"], "out/last_reply_echo.wav")
+                            play_path, _ = self.echo_engine.process_file(self.cfg["out_wav"],
+                                                                         "out/last_reply_echo.wav")
                             self.logln("[echo] processed -> out/last_reply_echo.wav")
                         except Exception as e:
                             self.logln(f"[echo] processing failed: {e} (playing dry)")
@@ -3126,11 +3341,8 @@ DO NOT:
                 if role == "vision":
                     self._latex_theme("default")
 
-                # Don't reset listen prompt variables here
-                # self._chime_played = False  # This is for listen prompt
-                # self._beep_once_guard = False  # This is for listen prompt
-        self.stop()
 
+        self.stop()
 
     # === Voice/Audio Methods ===
     def start_bargein_mic(self, device_idx):
@@ -3332,43 +3544,48 @@ DO NOT:
             self.speaking_flag = prev
 
     def speak_search_status(self, message="Searching the internet for this information"):
-        """Speak search status messages with minimal interruption"""
+        """Speak search status messages with echo support"""
         if not message or not message.strip():
             return
 
+        self.logln(f"[search-status] 🔊 Processing: {message}")
+
         try:
-            # Clean the text for TTS (removes LaTeX, etc.)
+            # Clean the text for TTS
             clean_message = clean_for_tts(message)
             status_path = "out/search_status.wav"
 
-            # Use the same TTS synthesis as regular responses
             if self.synthesize_to_wav(clean_message, status_path, role="text"):
-                # Play in a separate thread to not block the main application
                 def play_status():
                     try:
-                        # Brief pause to ensure it doesn't cut off any current speech
                         time.sleep(0.1)
+
+                        # === APPLY ECHO IF ENABLED ===
+                        play_path = status_path
+                        if bool(self.echo_enabled_var.get()):
+                            try:
+                                echo_path = "out/search_status_echo.wav"
+                                play_path, _ = self.echo_engine.process_file(status_path, echo_path)
+                                self.logln("[search-status] 🔁 Echo applied to status message")
+                            except Exception as e:
+                                self.logln(f"[search-status] echo processing failed: {e} (playing dry)")
 
                         # Get the output device
                         out_dev = self._selected_out_device_index()
 
                         # Load and play the audio file
-                        data, fs = sf.read(status_path, dtype="float32")
+                        data, fs = sf.read(play_path, dtype="float32")
                         if data.size > 0:
-                            # Play without blocking - user can still speak or do other things
                             sd.play(data, fs, blocking=False, device=out_dev)
-                            self.logln(f"[search-status] Playing: {message}")
+                            self.logln(f"[search-status] ✅ Playing: {message}")
 
                     except Exception as e:
-                        # Non-critical error - just log it
                         self.logln(f"[search-status] play error: {e}")
 
-                # Start the playback in a separate thread
                 threading.Thread(target=play_status, daemon=True).start()
 
         except Exception as e:
             self.logln(f"[search-status] synthesis error: {e}")
-
 
 
 
@@ -3420,31 +3637,6 @@ DO NOT:
             SILENCE_MAX_BLOCKS = 20
             cursor = 0
 
-            def _ui_progress_tick():
-                if self._hi_stop:
-                    return
-                try:
-                    if self._tts_total_samples > 0:
-                        r_raw = float(self._tts_cursor_samples) / float(self._tts_total_samples)
-                        if self._tts_silent:
-                            r_target = self._ui_last_ratio
-                        else:
-                            r_curved = r_raw ** self._ui_gamma
-                            r_target = r_curved
-                            self._ui_last_ratio = r_target
-                        self._ui_last_ratio = 0.0 if self._ui_last_ratio < 0 else (
-                            1.0 if self._ui_last_ratio > 1 else self._ui_last_ratio)
-                        alpha = 0.25
-                        self._ui_eased_ratio += alpha * (r_target - self._ui_eased_ratio)
-                        r_show = 0.0 if self._ui_eased_ratio < 0 else (
-                            1.0 if self._ui_eased_ratio > 1 else self._ui_eased_ratio)
-                        try:
-                            self.latex_win.set_highlight_ratio(r_show)
-                        except Exception:
-                            pass
-                    self.master.after(33, _ui_progress_tick)
-                except Exception:
-                    pass
 
             def run_stream():
                 nonlocal cursor, fs, data, blocksize, latency_hint, out_dev, extra
@@ -3493,7 +3685,7 @@ DO NOT:
                         else:
                             silent_blocks = 0
 
-                    self._tts_silent = bool(avg_abs < SILENCE_THRESH)
+                   # self._tts_silent = bool(avg_abs < SILENCE_THRESH)
                     env = min(max(avg_abs * 4.0, 0.0), 1.0) ** 0.6
                     AVATAR_LEVELS = 32
                     level = int(env * (AVATAR_LEVELS - 1) + 1e-6)
@@ -3508,7 +3700,7 @@ DO NOT:
                         raise sd.CallbackStop()
 
                     cursor = end
-                    self._tts_cursor_samples = int(cursor)
+                   #self._tts_cursor_samples = int(cursor)
 
                 def open_stream(extra_settings, device_idx):
                     return sd.OutputStream(
@@ -3538,7 +3730,7 @@ DO NOT:
                     ctx = open_stream(None, chosen_dev)
 
                 with ctx:
-                    self.master.after(0, _ui_progress_tick)
+                   # self.master.after(0, _ui_progress_tick)
                     while self.running and not self.interrupt_flag and cursor < data.shape[0]:
                         if cursor == last_cursor_check:
                             stall_ticks += 1
@@ -3571,15 +3763,7 @@ DO NOT:
                     self.avatar_win.set_level(0)
             except Exception:
                 pass
-            self._hi_stop = True
-            self._tts_silent = False
-            self._ui_last_ratio = 0.0
-            self._ui_eased_ratio = 0.0
-            try:
-                self.latex_win.set_highlight_ratio(1.0)
-                self.master.after(250, self.latex_win.clear_highlight)
-            except Exception:
-                pass
+
             self._beep_once_guard = False
             dur = time.monotonic() - start_time
             self.logln(f"[audio] playback done ({dur:.2f}s)")
@@ -3633,6 +3817,35 @@ DO NOT:
 
         def matched(patterns):
             return any(p in text for p in patterns)
+
+        # Mute Commands
+        mute_commands = [
+            "mute text", "mute text ai", "silence text", "text ai mute", "text mute",
+            "mute vision", "mute vision ai", "silence vision", "vision ai mute", "vision mute",
+            "unmute text", "unmute text ai", "enable text audio", "text audio on",
+            "unmute vision", "unmute vision ai", "enable vision audio", "vision audio on",
+            "toggle text mute", "toggle vision mute", "text mute toggle", "vision mute toggle"
+        ]
+
+        # Add these exact conditionals:
+        if any(cmd in text for cmd in ["mute text", "silence text"]) and "unmute" not in text:
+            self.mute_text_ai()
+            return True
+        elif any(cmd in text for cmd in ["unmute text", "enable text audio"]):
+            self.unmute_text_ai()
+            return True
+        elif any(cmd in text for cmd in ["mute vision", "silence vision"]) and "unmute" not in text:
+            self.mute_vision_ai()
+            return True
+        elif any(cmd in text for cmd in ["unmute vision", "enable vision audio"]):
+            self.unmute_vision_ai()
+            return True
+        elif any(cmd in text for cmd in ["toggle text mute", "text mute toggle"]):
+            self.toggle_text_ai_mute()
+            return True
+        elif any(cmd in text for cmd in ["toggle vision mute", "vision mute toggle"]):
+            self.toggle_vision_ai_mute()
+            return True
 
         # === SEARCH VOICE COMMANDS ===
         search_commands = [
@@ -4408,7 +4621,11 @@ DO NOT:
                 self.search_win.synthesize_search_results = self.synthesize_search_results
                 self.search_win.normalize_query = self.normalize_query
                 self.search_win.play_search_results = self.play_search_results
-
+                # ===  CRITICAL CONNECTIONS ===
+                self.search_win.main_app = self  # Give access to main app
+                self.search_win.preview_latex = self.preview_latex  # Use main app's method
+                self.search_win.ensure_latex_window = self.ensure_latex_window  # Use main app's method
+                self.search_win.logln = self.logln  # Use main app's logging
             # Always show the window if ensure_visible is True (for voice searches)
             # or if we're toggling and it's currently withdrawn
             if ensure_visible or self.search_win.state() == "withdrawn":
@@ -4444,7 +4661,7 @@ DO NOT:
         threading.Thread(target=self.handle_text_query, args=(text,), daemon=True).start()
 
     def preview_latex(self, content: str, context="text"):
-        """Preview LaTeX content in the appropriate window"""
+        """Preview LaTeX content with append/replace option - ENHANCED FOR SEARCH"""
         if not self.latex_auto.get():
             return
 
@@ -4452,13 +4669,25 @@ DO NOT:
             try:
                 latex_win = self.ensure_latex_window(context)
                 latex_win.show()
-                latex_win.show_document(content)
+
+                # === CHECK APPEND MODE ===
+                if self.latex_append_mode.get():
+                    # APPEND MODE - add to existing content
+                    latex_win.append_document(content)
+                    self.logln(f"[latex] 📝 Appended to {context} window")
+                else:
+                    # REPLACE MODE - clear and show new content (original behavior)
+                    latex_win.show_document(content)
+                    self.logln(f"[latex] 🔄 Showing in {context} window (replace mode)")
+
                 self._current_latex_context = context
-                self.logln(f"[latex] Showing in {context} window")
+
             except Exception as e:
                 self.logln(f"[latex] preview error ({context}): {e}")
 
         self.master.after(0, _go)
+
+
 
     def preview_search_results(self, content: str):
         """Special method for search results that preserves the display"""
@@ -4474,9 +4703,43 @@ DO NOT:
         except Exception:
             pass
 
+    def auto_mute_other_ai(self, current_ai):
+        """
+        Automatically mute the other AI when one is speaking
+        This prevents both AIs from trying to speak simultaneously
+
+        Args:
+            current_ai: "text" or "vision" - which AI is about to speak
+        """
+        with self._mute_lock:
+            if current_ai == "text":
+                # Text AI is about to speak, so mute Vision AI
+                if not self.vision_ai_muted:
+                    self.vision_ai_muted = True
+                    self.logln("[auto-mute] 🔇 Auto-muted Vision AI (Text AI is speaking)")
+                    self.update_mute_buttons()
+            elif current_ai == "vision":
+                # Vision AI is about to speak, so mute Text AI
+                if not self.text_ai_muted:
+                    self.text_ai_muted = True
+                    self.logln("[auto-mute] 🔇 Auto-muted Text AI (Vision AI is speaking)")
+                    self.update_mute_buttons()
 
 
     def synthesize_to_wav(self, text, out_wav, role="text"):
+
+        """Synthesize text to WAV with mute checking"""
+
+        # === ADD THIS CHECK AT THE START ===
+        # Check mute states before doing any TTS synthesis
+        if role == "text" and self.text_ai_muted:
+            self.logln("[mute] 🔇 Text AI muted - skipping TTS synthesis completely")
+            return False  # This prevents the WAV file from being created
+        elif role == "vision" and self.vision_ai_muted:
+            self.logln("[mute] 🔇 Vision AI muted - skipping TTS synthesis completely")
+            return False  # This prevents the WAV file from being created
+        # === END OF MUTE CHECK ===
+
         import time
         engine = self.tts_engine.get()
 
