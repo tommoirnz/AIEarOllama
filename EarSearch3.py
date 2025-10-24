@@ -833,25 +833,139 @@ class CircleAvatarWindow(tk.Toplevel):
     LEVELS = 32
     MAX_RINGS = 32
     BG = "#000000"
+    MASK_COLOR = "#00FF00"  # For transparency
 
     def __init__(self, master):
         super().__init__(master)
-        self.title("Avatar")
-        self.configure(bg=self.BG)
-        self.geometry("480x480")
-        self.protocol("WM_DELETE_WINDOW", self.hide)
-        self.canvas = tk.Canvas(self, bg=self.BG, highlightthickness=0)
+        self.title("Avatar - Rings")
+
+        # === CIRCULAR WINDOW SETUP ===
+        self._scale_factor = 1.0
+        self._base_diameter = 480
+
+        # Make window circular
+        try:
+            self.overrideredirect(True)
+            self.wm_attributes("-transparentcolor", self.MASK_COLOR)
+            self.configure(bg=self.MASK_COLOR)
+        except Exception:
+            pass
+
+        self._update_window_size()
+        self.center_on_screen()
+
+        # === DRAG & RESIZE SETUP ===
+        self._drag_data = {"x": 0, "y": 0}
+        self._resize_data = {"active": False, "corner": None}
+        self.bind("<Button-1>", self._start_drag)
+        self.bind("<B1-Motion>", self._do_drag)
+
+        # Mouse wheel for scaling
+        self.bind("<MouseWheel>", self._on_mouse_wheel)
+        self.bind("<Button-4>", self._on_mouse_wheel)  # Linux
+        self.bind("<Button-5>", self._on_mouse_wheel)  # Linux
+
+        # Canvas setup
+        self.canvas = tk.Canvas(self, bg=self.MASK_COLOR, highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
         self.canvas.bind("<Configure>", lambda e: self.redraw())
+
+        # Bind mouse events to canvas too
+        self.canvas.bind("<MouseWheel>", self._on_mouse_wheel)
+        self.canvas.bind("<Button-4>", self._on_mouse_wheel)
+        self.canvas.bind("<Button-5>", self._on_mouse_wheel)
+
         self.pad = 8
         self.level = 0
         self._t0 = time.perf_counter()
         self._color_timer = None
         self._running = True
+
+        # Add close button
+        self._add_close_button()
         self.start_color_timer()
 
+    def _update_window_size(self):
+        """Update window size based on current scale factor"""
+        current_diameter = int(self._base_diameter * self._scale_factor)
+        try:
+            current_geometry = self.geometry()
+            if '+' in current_geometry:
+                parts = current_geometry.split('+')
+                if len(parts) == 3:
+                    x_pos, y_pos = int(parts[1]), int(parts[2])
+                    self.geometry(f"{current_diameter}x{current_diameter}+{x_pos}+{y_pos}")
+                else:
+                    self.geometry(f"{current_diameter}x{current_diameter}")
+            else:
+                self.geometry(f"{current_diameter}x{current_diameter}")
+        except Exception:
+            self.geometry(f"{current_diameter}x{current_diameter}")
+
+    def center_on_screen(self):
+        """Center the window on screen"""
+        self.update_idletasks()
+        width = self.winfo_width()
+        height = self.winfo_height()
+        x = (self.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.winfo_screenheight() // 2) - (height // 2)
+        self.geometry(f"{width}x{height}+{x}+{y}")
+
+    def _add_close_button(self):
+        """Add a subtle black close button that blends with the background"""
+        close_btn = tk.Button(self, text="×", font=("Arial", 10),
+                              bg="#000000", fg="#666666", border=0, width=2,
+                              activebackground="#111111", activeforeground="#888888",
+                              command=self.hide)
+        close_btn.place(relx=1.0, rely=0.0, anchor="ne", x=-8, y=8)
+
+        # Add hover effect for better usability
+        def on_enter(e):
+            close_btn.config(fg="#888888", bg="#111111")
+
+        def on_leave(e):
+            close_btn.config(fg="#666666", bg="#000000")
+
+        close_btn.bind("<Enter>", on_enter)
+        close_btn.bind("<Leave>", on_leave)
+
+
+
+    # === MOUSE CONTROLS ===
+    def _start_drag(self, e):
+        self._drag_data["x"] = e.x_root - self.winfo_x()
+        self._drag_data["y"] = e.y_root - self.winfo_y()
+
+    def _do_drag(self, e):
+        self.geometry(f"+{e.x_root - self._drag_data['x']}+{e.y_root - self._drag_data['y']}")
+
+    def _on_mouse_wheel(self, event):
+        """Handle mouse wheel scaling"""
+        SCALE_MIN, SCALE_MAX, SCALE_STEP = 0.3, 2.0, 0.1
+
+        if event.delta > 0 or event.num == 4:  # Scroll up
+            new_scale = min(SCALE_MAX, self._scale_factor + SCALE_STEP)
+        else:  # Scroll down
+            new_scale = max(SCALE_MIN, self._scale_factor - SCALE_STEP)
+
+        if new_scale != self._scale_factor:
+            self._scale_factor = new_scale
+            self._update_window_size()
+            self.log_scale_change()
+
+    def log_scale_change(self):
+        """Log scale change"""
+        try:
+            if hasattr(self.master, 'logln'):
+                self.master.logln(f"[avatar] Rings scale: {self._scale_factor:.1f}x")
+            else:
+                print(f"[avatar] Rings scale: {self._scale_factor:.1f}x")
+        except:
+            print(f"[avatar] Rings scale: {self._scale_factor:.1f}x")
+
+    # === AVATAR METHODS ===
     def show(self):
-        self.deiconify();
+        self.deiconify()
         self.lift()
 
     def hide(self):
@@ -898,18 +1012,26 @@ class CircleAvatarWindow(tk.Toplevel):
         cw = max(1, self.canvas.winfo_width())
         ch = max(1, self.canvas.winfo_height())
         cx, cy = cw // 2, ch // 2
-        avail = max(1, min(cw, ch) - 2 * self.pad)
-        rings = max(1, int((self.level / float(self.LEVELS - 1)) * self.MAX_RINGS + 0.5))
-        r_min = max(1, int(avail * 0.012))
-        r_max = int(avail * 0.49)
-        r_outer = int(r_min + (r_max - r_min) * (self.level / float(self.LEVELS - 1)))
-        stroke = max(2, int(avail * 0.009))
+
+        # Draw circular background
         self.canvas.delete("all")
+        r = min(cw, ch) // 2 - self.pad
+        self.canvas.create_oval(cx - r, cy - r, cx + r, cy + r,
+                                fill=self.BG, outline=self.BG)
+
+        # Draw rings based on level
+        rings = max(1, int((self.level / float(self.LEVELS - 1)) * self.MAX_RINGS + 0.5))
+        r_min = max(1, int(r * 0.05))
+        r_max = int(r * 0.95)
+        r_outer = int(r_min + (r_max - r_min) * (self.level / float(self.LEVELS - 1)))
+        stroke = max(2, int(r * 0.02))
+
         if rings == 1:
             col = self._ring_color(0, 1)
             self.canvas.create_oval(cx - r_min, cy - r_min, cx + r_min, cy + r_min,
                                     fill=col, outline=col)
             return
+
         for k in range(rings):
             rk = int(r_outer * (1.0 - k / float(rings)))
             if rk <= 1:
@@ -918,12 +1040,30 @@ class CircleAvatarWindow(tk.Toplevel):
             self.canvas.create_oval(cx - rk, cy - rk, cx + rk, cy + rk,
                                     outline=col, width=stroke)
 
+    # === PUBLIC SCALE METHODS ===
+    def set_scale(self, scale_factor: float):
+        """Programmatically set scale factor"""
+        self._scale_factor = max(0.3, min(2.0, scale_factor))
+        self._update_window_size()
+        self.log_scale_change()
+
+    def get_scale(self) -> float:
+        """Get current scale factor"""
+        return self._scale_factor
+
+    def reset_scale(self):
+        """Reset to default scale"""
+        self._scale_factor = 1.0
+        self._update_window_size()
+        self.log_scale_change()
+
 
 class RectAvatarWindow(tk.Toplevel):
     LEVELS = 32
     BG = "#000000"
+    MASK_COLOR = "#00FF00"
 
-    # --- visual tuning ---
+    # Visual parameters - HORIZONTAL ONLY
     MAX_PARTICLES = 450
     SPAWN_AT_MAX_LVL = 60
     RECT_MIN_LEN_F = 0.03
@@ -931,22 +1071,43 @@ class RectAvatarWindow(tk.Toplevel):
     RECT_THICK_F = 0.012
     RECT_LIFETIME = 0.9
     DRIFT_PIX_F = 0.01
-
-    # spawn shaping (few at low volume, many at high)
     LEVEL_DEADZONE = 2
     SPAWN_GAMMA = 1.8
     MIN_SPAWN = 0
 
     def __init__(self, master):
         super().__init__(master)
-        self.title("Avatar — Rectangles")
-        self.configure(bg=self.BG)
-        self.geometry("480x480")
-        self.protocol("WM_DELETE_WINDOW", self.hide)
+        self.title("Avatar - Horizontal Rectangles")
 
-        self.canvas = tk.Canvas(self, bg=self.BG, highlightthickness=0)
+        # === CIRCULAR WINDOW SETUP ===
+        self._scale_factor = 1.0
+        self._base_diameter = 480
+
+        try:
+            self.overrideredirect(True)
+            self.wm_attributes("-transparentcolor", self.MASK_COLOR)
+            self.configure(bg=self.MASK_COLOR)
+        except Exception:
+            pass
+
+        self._update_window_size()
+        self.center_on_screen()
+
+        # === DRAG & SCALE SETUP ===
+        self._drag_data = {"x": 0, "y": 0}
+        self.bind("<Button-1>", self._start_drag)
+        self.bind("<B1-Motion>", self._do_drag)
+        self.bind("<MouseWheel>", self._on_mouse_wheel)
+        self.bind("<Button-4>", self._on_mouse_wheel)
+        self.bind("<Button-5>", self._on_mouse_wheel)
+
+        # Canvas
+        self.canvas = tk.Canvas(self, bg=self.MASK_COLOR, highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
         self.canvas.bind("<Configure>", lambda e: self.redraw())
+        self.canvas.bind("<MouseWheel>", self._on_mouse_wheel)
+        self.canvas.bind("<Button-4>", self._on_mouse_wheel)
+        self.canvas.bind("<Button-5>", self._on_mouse_wheel)
 
         self.pad = 8
         self.level = 0
@@ -954,191 +1115,33 @@ class RectAvatarWindow(tk.Toplevel):
         self._particles = []
         self._run = True
 
-        # repaint loop
+        # Close button
+        self._add_close_button()
         self._tick = self.after(16, self._loop)
 
-    def destroy(self):
-        self._run = False
-        try:
-            if self._tick: self.after_cancel(self._tick)
-        except Exception:
-            pass
-        super().destroy()
+    def _add_close_button(self):
+        """Add a subtle black close button"""
+        close_btn = tk.Button(self, text="×", font=("Arial", 10),
+                              bg="#000000", fg="#666666", border=0, width=2,
+                              activebackground="#111111", activeforeground="#888888",
+                              command=self.hide)
+        close_btn.place(relx=1.0, rely=0.0, anchor="ne", x=-8, y=8)
 
-    def show(self):
-        self.deiconify();
-        self.lift()
+        # Hover effects
+        def on_enter(e):
+            close_btn.config(fg="#888888", bg="#111111")
 
-    def hide(self):
-        self.withdraw()
+        def on_leave(e):
+            close_btn.config(fg="#666666", bg="#000000")
 
-    def set_level(self, level: int):
-        self.level = max(0, min(self.LEVELS - 1, int(level)))
+        close_btn.bind("<Enter>", on_enter)
+        close_btn.bind("<Leave>", on_leave)
 
-    # color util
-    def _hsv_to_hex(self, h, s, v):
-        i = int(h * 6);
-        f = h * 6 - i
-        p = v * (1 - s);
-        q = v * (1 - f * s);
-        t = v * (1 - (1 - f) * s)
-        i %= 6
-        r, g, b = [(v, t, p), (q, v, p), (p, v, t), (p, q, v), (t, p, v), (v, p, q)][i]
-        return "#%02x%02x%02x" % (int(r * 255), int(g * 255), int(b * 255))
-
-    def _spawn_count(self):
-        if self.level <= self.LEVEL_DEADZONE:
-            return 0
-        usable = self.LEVELS - 1 - self.LEVEL_DEADZONE
-        if usable <= 0: return 0
-        x = (self.level - self.LEVEL_DEADZONE) / float(usable)
-        x = max(0.0, min(1.0, x))
-        return int(0.5 + self.MIN_SPAWN + (self.SPAWN_AT_MAX_LVL - self.MIN_SPAWN) * (x ** self.SPAWN_GAMMA))
-
-    def _spawn(self, n):
-        cw = max(1, self.canvas.winfo_width())
-        ch = max(1, self.canvas.winfo_height())
-        if cw <= 2 * self.pad or ch <= 2 * self.pad: return
-
-        min_len = max(6, int(cw * self.RECT_MIN_LEN_F))
-        max_len = max(min_len + 4, int(cw * self.RECT_MAX_LEN_F))
-        thick = max(3, int(ch * self.RECT_THICK_F))
-        drift_p = max(1, int(min(cw, ch) * self.DRIFT_PIX_F))
-
-        now = time.perf_counter()
-        for _ in range(n):
-            cx = np.random.randint(self.pad, cw - self.pad)
-            cy = np.random.randint(self.pad, ch - self.pad)
-            L = np.random.randint(min_len, max_len)
-            x1 = max(self.pad, cx - L // 2);
-            x2 = min(cw - self.pad, cx + L // 2)
-            y1 = max(self.pad, cy - thick // 2);
-            y2 = min(ch - self.pad, cy + thick // 2)
-            vx = np.random.randint(-drift_p, drift_p);
-            vy = np.random.randint(-drift_p, drift_p)
-            col = self._hsv_to_hex(np.random.random(), 0.95, 1.0)
-            self._particles.append(
-                {"x1": x1, "y1": y1, "x2": x2, "y2": y2, "vx": vx, "vy": vy, "birth": now, "life": self.RECT_LIFETIME,
-                 "color": col})
-
-        if len(self._particles) > self.MAX_PARTICLES:
-            self._particles = self._particles[-self.MAX_PARTICLES:]
-
-    def _loop(self):
-        if not self._run: return
-        self.redraw()
-        self._tick = self.after(16, self._loop)
-
-    def redraw(self):
-        now = time.perf_counter()
-        dt = max(0.0, now - self._last_time)
-        self._last_time = now
-
-        if self.level <= 0:
-            self._particles.clear()
-            self.canvas.delete("all")
-            return
-
-        spawn = self._spawn_count()
-        if spawn > 0: self._spawn(spawn)
-
-        cw = max(1, self.canvas.winfo_width());
-        ch = max(1, self.canvas.winfo_height())
-        self.canvas.delete("all")
-        alive = []
-        for p in self._particles:
-            age = now - p["birth"]
-            if age > p["life"]: continue
-            p["x1"] += p["vx"] * dt;
-            p["x2"] += p["vx"] * dt
-            p["y1"] += p["vy"] * dt;
-            p["y2"] += p["vy"] * dt
-            pad = self.pad
-            if p["x1"] < pad: s = pad - p["x1"]; p["x1"] += s; p["x2"] += s
-            if p["x2"] > cw - pad: s = (cw - pad) - p["x2"]; p["x1"] += s; p["x2"] += s
-            if p["y1"] < pad: s = pad - p["y1"]; p["y1"] += s; p["y2"] += s
-            if p["y2"] > ch - pad: s = (ch - pad) - p["y2"]; p["y1"] += s; p["y2"] += s
-
-            t = age / p["life"]
-            stipples = ("", "gray12", "gray25", "gray50", "gray75")
-            idx = min(len(stipples) - 1, int(t * (len(stipples))))
-            stipple = stipples[idx]
-            self.canvas.create_rectangle(int(p["x1"]), int(p["y1"]), int(p["x2"]), int(p["y2"]),
-                                         fill=p["color"], outline=p["color"],
-                                         stipple=stipple if stipple else None)
-            alive.append(p)
-        self._particles = alive
-
-
-class RectAvatarWindow2(RectAvatarWindow):
-    """
-    Rectangles (circular window):
-    - Inherits modulation: call self.avatar.set_level(level) from your WAV timer.
-    - Window is circular via transparent mask (keeps bars inside the circle).
-    - Spawns within a radius, clips bars to the circle chord, gentle center pull.
-    - MOUSE SCALING: Use mouse wheel to scale the avatar size
-    """
-
-    # --- circular-window specifics / tunables ---
-    CIRCLE_DIAM = 900  # window diameter in px
-    MASK_COLOR = "#00FF00"  # transparent chroma-key color
-    EDGE_INSET_F = 1.00  # 1.0 hugs chord; <1.0 keeps a gap
-    SPAWN_RADIUS_F = 0.90  # 0..1 (smaller => more central spawn)
-    CENTER_PULL = 0.07  # 0.. (per-second pull toward center)
-    VERTICAL_PROPORTION = 0.40  # share of vertical bars
-
-    # --- scaling parameters ---
-    SCALE_MIN = 0.3  # minimum scale factor
-    SCALE_MAX = 2.0  # maximum scale factor
-    SCALE_STEP = 0.1  # scaling step per mouse wheel click
-
-    def __init__(self, master):
-        # build the base window + canvas
-        super().__init__(master)
-        self.title("Avatar — Rectangles (circle)")
-
-        # Initialize scaling
-        self._scale_factor = 1.0
-        self._base_diameter = self.CIRCLE_DIAM
-
-        # make the toplevel circular via transparent color
-        try:
-            self.overrideredirect(True)
-            self.wm_attributes("-transparentcolor", self.MASK_COLOR)
-            # background to mask color so corners go transparent
-            self.configure(bg=self.MASK_COLOR)
-            self.canvas.configure(bg=self.MASK_COLOR)
-        except Exception:
-            # if unsupported, window stays rectangular
-            pass
-
-        # size + center on screen
-        self._update_window_size()
-
-        # simple drag-to-move (no title bar)
-        self._drag = {"x": 0, "y": 0}
-        self.bind("<Button-1>", self._start_drag)
-        self.bind("<B1-Motion>", self._do_drag)
-
-        # === ADD MOUSE WHEEL BINDING FOR SCALING ===
-        self.bind("<MouseWheel>", self._on_mouse_wheel)  # Windows
-        self.bind("<Button-4>", self._on_mouse_wheel)  # Linux scroll up
-        self.bind("<Button-5>", self._on_mouse_wheel)  # Linux scroll down
-
-        # Also bind to canvas for when mouse is over particles
-        self.canvas.bind("<MouseWheel>", self._on_mouse_wheel)
-        self.canvas.bind("<Button-4>", self._on_mouse_wheel)
-        self.canvas.bind("<Button-5>", self._on_mouse_wheel)
-
-    # ----- scaling methods -----
     def _update_window_size(self):
-        """Update window size based on current scale factor"""
         current_diameter = int(self._base_diameter * self._scale_factor)
         try:
-            # Get current position to maintain location
             current_geometry = self.geometry()
             if '+' in current_geometry:
-                # Extract position from geometry string "WxH+X+Y"
                 parts = current_geometry.split('+')
                 if len(parts) == 3:
                     x_pos, y_pos = int(parts[1]), int(parts[2])
@@ -1149,6 +1152,347 @@ class RectAvatarWindow2(RectAvatarWindow):
                 self.geometry(f"{current_diameter}x{current_diameter}")
         except Exception:
             self.geometry(f"{current_diameter}x{current_diameter}")
+
+    def center_on_screen(self):
+        self.update_idletasks()
+        width = self.winfo_width()
+        height = self.winfo_height()
+        x = (self.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.winfo_screenheight() // 2) - (height // 2)
+        self.geometry(f"{width}x{height}+{x}+{y}")
+
+    def _start_drag(self, e):
+        self._drag_data["x"] = e.x_root - self.winfo_x()
+        self._drag_data["y"] = e.y_root - self.winfo_y()
+
+    def _do_drag(self, e):
+        self.geometry(f"+{e.x_root - self._drag_data['x']}+{e.y_root - self._drag_data['y']}")
+
+    def _on_mouse_wheel(self, event):
+        SCALE_MIN, SCALE_MAX, SCALE_STEP = 0.3, 2.0, 0.1
+
+        if event.delta > 0 or event.num == 4:
+            new_scale = min(SCALE_MAX, self._scale_factor + SCALE_STEP)
+        else:
+            new_scale = max(SCALE_MIN, self._scale_factor - SCALE_STEP)
+
+        if new_scale != self._scale_factor:
+            self._scale_factor = new_scale
+            self._update_window_size()
+            self.log_scale_change()
+
+    def log_scale_change(self):
+        try:
+            if hasattr(self.master, 'logln'):
+                self.master.logln(f"[avatar] Horizontal Rectangles scale: {self._scale_factor:.1f}x")
+            else:
+                print(f"[avatar] Horizontal Rectangles scale: {self._scale_factor:.1f}x")
+        except:
+            print(f"[avatar] Horizontal Rectangles scale: {self._scale_factor:.1f}x")
+
+    def destroy(self):
+        self._run = False
+        try:
+            if self._tick:
+                self.after_cancel(self._tick)
+        except Exception:
+            pass
+        super().destroy()
+
+    def show(self):
+        self.deiconify()
+        self.lift()
+
+    def hide(self):
+        self.withdraw()
+
+    def set_level(self, level: int):
+        self.level = max(0, min(self.LEVELS - 1, int(level)))
+
+    def _hsv_to_hex(self, h, s, v):
+        i = int(h * 6)
+        f = h * 6 - i
+        p = v * (1 - s)
+        q = v * (1 - f * s)
+        t = v * (1 - (1 - f) * s)
+        i %= 6
+        r, g, b = [(v, t, p), (q, v, p), (p, v, t),
+                   (p, q, v), (t, p, v), (v, p, q)][i]
+        return "#%02x%02x%02x" % (int(r * 255), int(g * 255), int(b * 255))
+
+    def _spawn_count(self):
+        if self.level <= self.LEVEL_DEADZONE:
+            return 0
+        usable = self.LEVELS - 1 - self.LEVEL_DEADZONE
+        if usable <= 0:
+            return 0
+        x = (self.level - self.LEVEL_DEADZONE) / float(usable)
+        x = max(0.0, min(1.0, x))
+        return int(0.5 + self.MIN_SPAWN +
+                   (self.SPAWN_AT_MAX_LVL - self.MIN_SPAWN) * (x ** self.SPAWN_GAMMA))
+
+    def _circle_geom(self):
+        cw = max(1, self.canvas.winfo_width())
+        ch = max(1, self.canvas.winfo_height())
+        cx, cy = cw // 2, ch // 2
+        r = max(1, min(cw, ch) // 2 - self.pad)
+        return cx, cy, r
+
+    def _uniform_point_in_disc(self, cx, cy, r):
+        inner_r = max(2, r * 0.85)
+        u = np.random.random()
+        theta = 2 * np.pi * np.random.random()
+        rho = inner_r * np.sqrt(u)
+        return int(cx + rho * np.cos(theta)), int(cy + rho * np.sin(theta))
+
+    def _spawn(self, n):
+        """ONLY HORIZONTAL rectangles - NO vertical ones"""
+        cx, cy, r = self._circle_geom()
+        if r <= 4:
+            return
+
+        d = 2 * r
+        min_len = max(6, int(d * self.RECT_MIN_LEN_F))
+        max_len = max(min_len + 2, int(d * self.RECT_MAX_LEN_F))
+        thick = max(3, int(r * self.RECT_THICK_F))
+        drift_p = max(1, int(r * self.DRIFT_PIX_F))
+        now = time.perf_counter()
+
+        for _ in range(n):
+            x0, y0 = self._uniform_point_in_disc(cx, cy, r)
+
+            # ONLY HORIZONTAL RECTANGLES - no vertical option
+            L = np.random.randint(min_len, max_len)
+            dy = abs(y0 - cy)
+            chord_half = int(math.sqrt(max(0, r * r - dy * dy)) * 0.95)
+            halfL = min(L // 2, chord_half)
+            x1, x2 = x0 - halfL, x0 + halfL
+            y1, y2 = y0 - thick // 2, y0 + thick // 2
+
+            vx = np.random.randint(-drift_p, drift_p)
+            vy = np.random.randint(-drift_p, drift_p)
+            col = self._hsv_to_hex(np.random.random(), 0.95, 1.0)
+
+            self._particles.append({
+                "x1": x1, "y1": y1, "x2": x2, "y2": y2,
+                "vx": vx, "vy": vy, "birth": now, "life": self.RECT_LIFETIME,
+                "color": col, "vertical": False  # Always horizontal
+            })
+
+        if len(self._particles) > self.MAX_PARTICLES:
+            self._particles = self._particles[-self.MAX_PARTICLES:]
+
+    def _loop(self):
+        if not self._run:
+            return
+        self.redraw()
+        self._tick = self.after(16, self._loop)
+
+    def redraw(self):
+        now = time.perf_counter()
+        dt = max(0.0, now - self._last_time)
+        self._last_time = now
+
+        cx, cy, r = self._circle_geom()
+
+        # Clear and draw circular background
+        self.canvas.delete("all")
+        self.canvas.create_oval(cx - r, cy - r, cx + r, cy + r,
+                                fill=self.BG, outline=self.BG)
+
+        if self.level <= 0:
+            self._particles.clear()
+            return
+
+        spawn = self._spawn_count()
+        if spawn > 0:
+            self._spawn(spawn)
+
+        alive = []
+        for p in self._particles:
+            age = now - p["birth"]
+            if age > p["life"]:
+                continue
+
+            # Update position - only horizontal movement logic needed
+            p["x1"] += p["vx"] * dt
+            p["x2"] += p["vx"] * dt
+            p["y1"] += p["vy"] * dt
+            p["y2"] += p["vy"] * dt
+
+            # Keep within circle bounds - simplified for horizontal only
+            mx = 0.5 * (p["x1"] + p["x2"])
+            my = 0.5 * (p["y1"] + p["y2"])
+
+            # Horizontal rectangle clipping
+            dy = my - cy
+            max_half_thick = max(0, int(math.sqrt(max(0, r * r - dy * dy))))
+            half_thick = max(1, int((p["y2"] - p["y1"]) * 0.5))
+            half_thick = min(half_thick, max_half_thick)
+            p["y1"], p["y2"] = my - half_thick, my + half_thick
+
+            chord_half = max(0, int(math.sqrt(max(0, r * r - dy * dy)) * 0.95))
+            halfL = min(int((p["x2"] - p["x1"]) * 0.5), chord_half)
+            p["x1"], p["x2"] = mx - halfL, mx + halfL
+
+            # Fade effect
+            t = age / p["life"]
+            stipples = ("", "gray12", "gray25", "gray50", "gray75")
+            idx = min(len(stipples) - 1, int(t * len(stipples)))
+            stipple = stipples[idx]
+
+            self.canvas.create_rectangle(
+                int(p["x1"]), int(p["y1"]), int(p["x2"]), int(p["y2"]),
+                fill=p["color"], outline=p["color"],
+                stipple=stipple if stipple else None
+            )
+            alive.append(p)
+
+        self._particles = alive
+
+    # Public scale methods
+    def set_scale(self, scale_factor: float):
+        self._scale_factor = max(0.3, min(2.0, scale_factor))
+        self._update_window_size()
+        self.log_scale_change()
+
+    def get_scale(self) -> float:
+        return self._scale_factor
+
+    def reset_scale(self):
+        self._scale_factor = 1.0
+        self._update_window_size()
+        self.log_scale_change()
+        
+class RectAvatarWindow2(tk.Toplevel):
+    """Rectangles (circular window) with enhanced features"""
+
+    LEVELS = 32
+    BG = "#000000"
+    MASK_COLOR = "#00FF00"
+
+    # Enhanced parameters
+    CIRCLE_DIAM = 900
+    MAX_PARTICLES = 450
+    SPAWN_AT_MAX_LVL = 60
+    RECT_MIN_LEN_F = 0.03
+    RECT_MAX_LEN_F = 0.22
+    RECT_THICK_F = 0.012
+    RECT_LIFETIME = 0.9
+    DRIFT_PIX_F = 0.01
+    LEVEL_DEADZONE = 2
+    SPAWN_GAMMA = 1.8
+    MIN_SPAWN = 0
+    CENTER_PULL = 0.07
+    VERTICAL_PROPORTION = 0.40
+    EDGE_INSET_F = 1.00
+    SPAWN_RADIUS_F = 0.90
+
+    # Scaling parameters
+    SCALE_MIN = 0.3
+    SCALE_MAX = 2.0
+    SCALE_STEP = 0.1
+
+    def __init__(self, master):
+        super().__init__(master)
+        self.title("Avatar — Rectangles 2")
+
+        # === CIRCULAR WINDOW SETUP ===
+        self._scale_factor = 1.0
+        self._base_diameter = self.CIRCLE_DIAM
+
+        # Make the toplevel circular via transparent color
+        try:
+            self.overrideredirect(True)
+            self.wm_attributes("-transparentcolor", self.MASK_COLOR)
+            self.configure(bg=self.MASK_COLOR)
+        except Exception:
+            # if unsupported, window stays rectangular
+            pass
+
+        self._update_window_size()
+        self.center_on_screen()
+
+        # === DRAG & SCALE SETUP ===
+        self._drag_data = {"x": 0, "y": 0}
+        self.bind("<Button-1>", self._start_drag)
+        self.bind("<B1-Motion>", self._do_drag)
+        self.bind("<MouseWheel>", self._on_mouse_wheel)
+        self.bind("<Button-4>", self._on_mouse_wheel)
+        self.bind("<Button-5>", self._on_mouse_wheel)
+
+        # Canvas setup
+        self.canvas = tk.Canvas(self, bg=self.MASK_COLOR, highlightthickness=0)
+        self.canvas.pack(fill="both", expand=True)
+        self.canvas.bind("<Configure>", lambda e: self.redraw())
+
+        # Bind mouse events to canvas too
+        self.canvas.bind("<MouseWheel>", self._on_mouse_wheel)
+        self.canvas.bind("<Button-4>", self._on_mouse_wheel)
+        self.canvas.bind("<Button-5>", self._on_mouse_wheel)
+
+        self.pad = 8
+        self.level = 0
+        self._last_time = time.perf_counter()
+        self._particles = []
+        self._run = True
+
+        # Add close button
+        self._add_close_button()
+        self._tick = self.after(16, self._loop)
+
+    def _update_window_size(self):
+        """Update window size based on current scale factor"""
+        current_diameter = int(self._base_diameter * self._scale_factor)
+        try:
+            current_geometry = self.geometry()
+            if '+' in current_geometry:
+                parts = current_geometry.split('+')
+                if len(parts) == 3:
+                    x_pos, y_pos = int(parts[1]), int(parts[2])
+                    self.geometry(f"{current_diameter}x{current_diameter}+{x_pos}+{y_pos}")
+                else:
+                    self.geometry(f"{current_diameter}x{current_diameter}")
+            else:
+                self.geometry(f"{current_diameter}x{current_diameter}")
+        except Exception:
+            self.geometry(f"{current_diameter}x{current_diameter}")
+
+    def center_on_screen(self):
+        """Center the window on screen"""
+        self.update_idletasks()
+        width = self.winfo_width()
+        height = self.winfo_height()
+        x = (self.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.winfo_screenheight() // 2) - (height // 2)
+        self.geometry(f"{width}x{height}+{x}+{y}")
+
+    def _add_close_button(self):
+        """Add a subtle black close button that blends with the background"""
+        close_btn = tk.Button(self, text="×", font=("Arial", 10),
+                              bg="#000000", fg="#666666", border=0, width=2,
+                              activebackground="#111111", activeforeground="#888888",
+                              command=self.hide)
+        close_btn.place(relx=1.0, rely=0.0, anchor="ne", x=-8, y=8)
+
+        # Add hover effect for better usability
+        def on_enter(e):
+            close_btn.config(fg="#888888", bg="#111111")
+
+        def on_leave(e):
+            close_btn.config(fg="#666666", bg="#000000")
+
+        close_btn.bind("<Enter>", on_enter)
+        close_btn.bind("<Leave>", on_leave)
+
+
+    # === MOUSE CONTROLS ===
+    def _start_drag(self, e):
+        self._drag_data["x"] = e.x_root - self.winfo_x()
+        self._drag_data["y"] = e.y_root - self.winfo_y()
+
+    def _do_drag(self, e):
+        self.geometry(f"+{e.x_root - self._drag_data['x']}+{e.y_root - self._drag_data['y']}")
 
     def _on_mouse_wheel(self, event):
         """Handle mouse wheel events for scaling"""
@@ -1163,25 +1507,62 @@ class RectAvatarWindow2(RectAvatarWindow):
             self.log_scale_change()
 
     def log_scale_change(self):
-        """Log scale change (you can connect this to your main app's logln)"""
+        """Log scale change"""
         try:
-            # Try to use main app's logging if available
             if hasattr(self.master, 'logln'):
-                self.master.logln(f"[avatar] Scale: {self._scale_factor:.1f}x")
+                self.master.logln(f"[avatar] Rectangles 2 scale: {self._scale_factor:.1f}x")
             else:
-                print(f"[avatar] Scale: {self._scale_factor:.1f}x")
+                print(f"[avatar] Rectangles 2 scale: {self._scale_factor:.1f}x")
         except:
-            print(f"[avatar] Scale: {self._scale_factor:.1f}x")
+            print(f"[avatar] Rectangles 2 scale: {self._scale_factor:.1f}x")
 
-    # ----- drag helpers (updated for scaling) -----
-    def _start_drag(self, e):
-        self._drag["x"], self._drag["y"] = e.x_root - self.winfo_x(), e.y_root - self.winfo_y()
+    # === WINDOW MANAGEMENT ===
+    def show(self):
+        self.deiconify()
+        self.lift()
 
-    def _do_drag(self, e):
-        self.geometry(f"+{e.x_root - self._drag['x']}+{e.y_root - self._drag['y']}")
+    def hide(self):
+        self.withdraw()
 
-    # ----- circle geometry / sampling (updated for scaling) -----
+    def destroy(self):
+        self._run = False
+        try:
+            if self._tick:
+                self.after_cancel(self._tick)
+        except Exception:
+            pass
+        super().destroy()
+
+    # === AVATAR CORE METHODS ===
+    def set_level(self, level: int):
+        self.level = max(0, min(self.LEVELS - 1, int(level)))
+
+    def _hsv_to_hex(self, h, s, v):
+        """Convert HSV to hex color"""
+        i = int(h * 6)
+        f = h * 6 - i
+        p = v * (1 - s)
+        q = v * (1 - f * s)
+        t = v * (1 - (1 - f) * s)
+        i %= 6
+        r, g, b = [(v, t, p), (q, v, p), (p, v, t),
+                   (p, q, v), (t, p, v), (v, p, q)][i]
+        return "#%02x%02x%02x" % (int(r * 255), int(g * 255), int(b * 255))
+
+    def _spawn_count(self):
+        """Calculate how many particles to spawn based on level"""
+        if self.level <= self.LEVEL_DEADZONE:
+            return 0
+        usable = self.LEVELS - 1 - self.LEVEL_DEADZONE
+        if usable <= 0:
+            return 0
+        x = (self.level - self.LEVEL_DEADZONE) / float(usable)
+        x = max(0.0, min(1.0, x))
+        return int(0.5 + self.MIN_SPAWN +
+                   (self.SPAWN_AT_MAX_LVL - self.MIN_SPAWN) * (x ** self.SPAWN_GAMMA))
+
     def _circle_geom(self):
+        """Get circle geometry"""
         cw = max(1, self.canvas.winfo_width())
         ch = max(1, self.canvas.winfo_height())
         cx, cy = cw // 2, ch // 2
@@ -1189,33 +1570,29 @@ class RectAvatarWindow2(RectAvatarWindow):
         return cx, cy, r
 
     def _uniform_point_in_disc(self, cx, cy, r):
-        # sample uniformly within SPAWN_RADIUS_F * r
+        """Sample uniformly within spawn radius"""
         inner_r = max(2, r * float(self.SPAWN_RADIUS_F))
         u = np.random.random()
         theta = 2 * np.pi * np.random.random()
         rho = inner_r * np.sqrt(u)
         return int(cx + rho * np.cos(theta)), int(cy + rho * np.sin(theta))
 
-    # ----- spawn override: inside circle + chord clipping + vertical mix -----
     def _spawn(self, n):
+        """Spawn particles within circular bounds"""
         cx, cy, r = self._circle_geom()
         if r <= 4:
             return
 
-        d = 2 * r  # circle diameter used for length scaling
-
-        # base sizes from parent tunables (bigger bars but still compact)
+        d = 2 * r
         min_len_h = max(6, int(d * (self.RECT_MIN_LEN_F * 1.00)))
         max_len_h = max(min_len_h + 2, int(d * (self.RECT_MAX_LEN_F * 1.00)))
         min_len_v = min_len_h
         max_len_v = max_len_h
 
-        # thickness based on radius
         thick = max(3, int(r * (self.RECT_THICK_F * 1.00)))
         thick_h = thick
         thick_v = thick
 
-        # drift scaled by radius (reuse parent drift factor)
         drift_p = max(1, int(r * self.DRIFT_PIX_F))
         now = time.perf_counter()
 
@@ -1244,24 +1621,30 @@ class RectAvatarWindow2(RectAvatarWindow):
 
             self._particles.append({
                 "x1": x1, "y1": y1, "x2": x2, "y2": y2,
-                "vx": vx, "vy": vy,
-                "birth": now, "life": self.RECT_LIFETIME,
+                "vx": vx, "vy": vy, "birth": now, "life": self.RECT_LIFETIME,
                 "color": col, "vertical": bool(vertical)
             })
 
         if len(self._particles) > self.MAX_PARTICLES:
             self._particles = self._particles[-self.MAX_PARTICLES:]
 
-    # ----- redraw override: draw circle BG + keep bars inside circle -----
+    def _loop(self):
+        """Main animation loop"""
+        if not self._run:
+            return
+        self.redraw()
+        self._tick = self.after(16, self._loop)
+
     def redraw(self):
+        """Redraw the entire avatar"""
         now = time.perf_counter()
         dt = max(0.0, now - self._last_time)
         self._last_time = now
 
         cx, cy, r = self._circle_geom()
-        self.canvas.delete("all")
 
-        # paint the visible circular area
+        # Clear and draw circular background
+        self.canvas.delete("all")
         self.canvas.create_oval(cx - r, cy - r, cx + r, cy + r,
                                 fill=self.BG, outline=self.BG)
 
@@ -1269,41 +1652,42 @@ class RectAvatarWindow2(RectAvatarWindow):
             self._particles.clear()
             return
 
-        # level → spawn count (inherited modulation)
+        # Spawn new particles if needed
         spawn = self._spawn_count()
         if spawn > 0:
             self._spawn(spawn)
 
+        # Update and draw particles
         alive = []
         for p in self._particles:
             age = now - p["birth"]
             if age > p["life"]:
                 continue
 
-            # integrate motion
-            p["x1"] += p["vx"] * dt;
+            # Integrate motion
+            p["x1"] += p["vx"] * dt
             p["x2"] += p["vx"] * dt
-            p["y1"] += p["vy"] * dt;
+            p["y1"] += p["vy"] * dt
             p["y2"] += p["vy"] * dt
 
-            # gentle center pull (keeps things compact)
+            # Gentle center pull
             if float(self.CENTER_PULL) > 0.0:
-                mx = 0.5 * (p["x1"] + p["x2"]);
+                mx = 0.5 * (p["x1"] + p["x2"])
                 my = 0.5 * (p["y1"] + p["y2"])
                 pull = float(self.CENTER_PULL) * dt
-                dx = (cx - mx) * pull;
+                dx = (cx - mx) * pull
                 dy = (cy - my) * pull
-                p["x1"] += dx;
-                p["x2"] += dx;
-                p["y1"] += dy;
+                p["x1"] += dx
+                p["x2"] += dx
+                p["y1"] += dy
                 p["y2"] += dy
-                mx += dx;
-                my += dy  # update center
+                mx += dx
+                my += dy
             else:
-                mx = 0.5 * (p["x1"] + p["x2"]);
+                mx = 0.5 * (p["x1"] + p["x2"])
                 my = 0.5 * (p["y1"] + p["y2"])
 
-            # circle-aware clipping by chord (prevents leakage outside circle)
+            # Circle-aware clipping by chord (prevents leakage outside circle)
             if p.get("vertical", False):
                 dx = mx - cx
                 max_half_thick = max(0, int(math.sqrt(max(0, r * r - dx * dx))))
@@ -1325,12 +1709,13 @@ class RectAvatarWindow2(RectAvatarWindow):
                 halfL = min(int((p["x2"] - p["x1"]) * 0.5), chord_half)
                 p["x1"], p["x2"] = mx - halfL, mx + halfL
 
-            # fade via stipple
+            # Fade via stipple
             t = age / p["life"]
             stipples = ("", "gray12", "gray25", "gray50", "gray75")
             idx = min(len(stipples) - 1, int(t * len(stipples)))
             stipple = stipples[idx]
 
+            # Draw the rectangle
             self.canvas.create_rectangle(
                 int(p["x1"]), int(p["y1"]), int(p["x2"]), int(p["y2"]),
                 fill=p["color"], outline=p["color"],
@@ -1340,7 +1725,7 @@ class RectAvatarWindow2(RectAvatarWindow):
 
         self._particles = alive
 
-    # ----- public methods for external control -----
+    # === PUBLIC SCALE METHODS ===
     def set_scale(self, scale_factor: float):
         """Programmatically set scale factor"""
         self._scale_factor = max(self.SCALE_MIN, min(self.SCALE_MAX, scale_factor))
@@ -1356,6 +1741,7 @@ class RectAvatarWindow2(RectAvatarWindow):
         self._scale_factor = 1.0
         self._update_window_size()
         self.log_scale_change()
+
 
 
 # === WEB SEARCH WINDOW CLASS ===
@@ -1978,6 +2364,8 @@ class App:
                 or self.cfg.get("vl_model_path")
                 or "qwen2.5-vl:7b"
         )
+
+
         # === ADD SLEEP VARIABLES RIGHT HERE ===
         self.sleep_mode = False
         self.sleep_commands = ["sleep", "go to sleep", "rest mode", "silence", "stop listening"]
@@ -1990,6 +2378,28 @@ class App:
         # Ensure output dir exists
         os.makedirs("out", exist_ok=True)
         purge_temp_images("out")
+        # === INITIALIZE ALL TKINTER VARIABLES HERE ===
+        self.tts_engine = tk.StringVar(value="sapi5")
+        self.speech_rate_var = tk.IntVar(value=0)
+        self.sapi_voice_var = tk.StringVar()
+        self.echo_enabled_var = tk.BooleanVar(value=False)
+        self.ducking_enable = tk.BooleanVar(value=True)
+        self.duck_db = tk.DoubleVar(value=12.0)
+        self.duck_thresh = tk.DoubleVar(value=1400.0)
+        self.duck_attack = tk.IntVar(value=50)
+        self.duck_release = tk.IntVar(value=250)
+        self.duck_var = tk.DoubleVar(value=100.0)
+        self.rms_var = tk.StringVar(value="RMS: 0")
+        self.state = tk.StringVar(value="idle")
+        self.device_idx = tk.StringVar()
+        self.out_device_idx = tk.StringVar()
+        self.duplex_mode = tk.StringVar(value="Half-duplex")
+        self.latex_auto = tk.BooleanVar(value=True)
+        self.latex_append_mode = tk.BooleanVar(value=False)
+        self.speak_math_var = tk.BooleanVar(value=True)
+        self.avatar_kind = tk.StringVar(value="Rings")
+
+
 
         self._last_search_query = ""
         self.search_win = None
@@ -2020,10 +2430,22 @@ class App:
         self.duck_release = tk.IntVar(value=250)
         self._duck_gain = 1.0
         self._duck_active = False
+
+        self._current_speaker = None  # Track which AI is currently speaking
+        self._speaker_lock = threading.Lock()
+
+
         self._duck_log = bool(self.cfg.get("duck_log", False))
         self._chime_played = False
         self._last_chime_ts = 0.0
         self._beep_once_guard = False
+
+        # === ADD SPEECH RATE VARIABLE HERE ===
+        self.speech_rate_var = tk.IntVar(value=0)
+
+        self._duck_gain = 1.0
+        self._duck_active = False
+
 
         # === NEW: Vision state initialization ===
         self._last_image_path = None
@@ -2210,11 +2632,6 @@ class App:
             self.out_combo.current(0)
         self.out_combo.grid(row=3, column=1, columnspan=9, sticky="we", padx=6, pady=6)
 
-        # TTS selection - SAPI5 ONLY
-        self.tts_engine = tk.StringVar(value="sapi5")
-        ttk.Label(self.master, text="TTS Engine:").grid(row=4, column=0, sticky="e")
-        ttk.Radiobutton(self.master, text="SAPI5", variable=self.tts_engine, value="sapi5").grid(row=4, column=1,
-                                                                                                 sticky="w")
 
         # SAPI voices
         self.sapi_voice_var = tk.StringVar()
@@ -2229,22 +2646,86 @@ class App:
         self.sapi_combo.current(0)
         self.sapi_combo.grid(row=5, column=1, columnspan=5, sticky="we", padx=6, pady=4)
 
-        # Text input
-        ttk.Label(self.master, text="Text input:").grid(row=6, column=0, sticky="ne", padx=(6, 0), pady=(0, 6))
+        # === ADD SPEECH SPEED CONTROL HERE ===
+        ttk.Label(self.master, text="Speech Speed:").grid(row=6, column=0, sticky="e", pady=4)
+
+        # Slider for precise control
+        self.speech_rate_var = tk.IntVar(value=5)
+        rate_slider = ttk.Scale(
+            self.master,
+            from_=-10,
+            to=10,
+            variable=self.speech_rate_var,
+            orient="horizontal",
+            length=180
+        )
+        rate_slider.grid(row=6, column=1, columnspan=3, sticky="we", padx=6, pady=4)
+
+        # Current value display
+        self.rate_value_label = ttk.Label(self.master, text="Fast")
+        self.rate_value_label.grid(row=6, column=4, sticky="w", padx=5)
+
+        # Preset buttons
+        preset_frame = ttk.Frame(self.master)
+        preset_frame.grid(row=7, column=1, columnspan=4, sticky="w", pady=2)
+
+        ttk.Button(preset_frame, text="Slow", width=6,
+                   command=lambda: self.set_speech_rate(-5)).pack(side="left", padx=2)
+        ttk.Button(preset_frame, text="Normal", width=6,
+                   command=lambda: self.set_speech_rate(0)).pack(side="left", padx=2)
+        ttk.Button(preset_frame, text="Fast", width=6,
+                   command=lambda: self.set_speech_rate(5)).pack(side="left", padx=2)
+        ttk.Button(preset_frame, text="Reset", width=6,
+                   command=lambda: self.set_speech_rate(5)).pack(side="left", padx=2)
+
+        # Initialize the display for fast speed
+        self.update_rate_display()
+
+
+        rate_slider = ttk.Scale(
+            self.master,
+            from_=-10,
+            to=10,
+            variable=self.speech_rate_var,
+            orient="horizontal",
+            length=180
+        )
+        rate_slider.grid(row=6, column=1, columnspan=3, sticky="we", padx=6, pady=4)
+
+        # Current value display
+        self.rate_value_label = ttk.Label(self.master, text="Normal")
+        self.rate_value_label.grid(row=6, column=4, sticky="w", padx=5)
+
+        # Preset buttons
+        preset_frame = ttk.Frame(self.master)
+        preset_frame.grid(row=7, column=1, columnspan=4, sticky="w", pady=2)
+
+        ttk.Button(preset_frame, text="Slow", width=6,
+                   command=lambda: self.set_speech_rate(-5)).pack(side="left", padx=2)
+        ttk.Button(preset_frame, text="Normal", width=6,
+                   command=lambda: self.set_speech_rate(0)).pack(side="left", padx=2)
+        ttk.Button(preset_frame, text="Fast", width=6,
+                   command=lambda: self.set_speech_rate(5)).pack(side="left", padx=2)
+        ttk.Button(preset_frame, text="Reset", width=6,
+                   command=lambda: self.set_speech_rate(0)).pack(side="left", padx=2)
+
+        # Text input - KEEP YOUR EXISTING SECTION BUT CHANGE ROW FROM 6 TO 8
+        ttk.Label(self.master, text="Text input:").grid(row=8, column=0, sticky="ne", padx=(6, 0), pady=(0, 6))
         self.text_box = ScrolledText(self.master, width=70, height=10, wrap="word")
-        self.text_box.grid(row=6, column=1, columnspan=8, sticky="we", padx=6, pady=(0, 6))
-        ttk.Button(self.master, text="Send", command=self.send_text).grid(row=6, column=9, sticky="nw", padx=6,
+        self.text_box.grid(row=8, column=1, columnspan=8, sticky="we", padx=6, pady=(0, 6))
+        ttk.Button(self.master, text="Send", command=self.send_text).grid(row=8, column=9, sticky="nw", padx=6,
                                                                           pady=(0, 6))
         self.text_box.bind("<Control-Return>", lambda e: (self.send_text(), "break"))
 
-        # Log
-        ttk.Label(self.master, text="Log:").grid(row=7, column=0, sticky="nw", padx=6)
+        # Log -
+        ttk.Label(self.master, text="Log:").grid(row=9, column=0, sticky="nw", padx=6)
         self.log = tk.Text(self.master, height=12, width=80)
-        self.log.grid(row=7, column=1, columnspan=9, sticky="nsew", padx=6)
-        self.master.grid_rowconfigure(7, weight=1)
+        self.log.grid(row=9, column=1, columnspan=9, sticky="nsew", padx=6)
+        self.master.grid_rowconfigure(9, weight=1)  # CHANGE FROM 7 TO 9
         self.master.grid_columnconfigure(9, weight=1)
         self.master.grid_columnconfigure(1, weight=1)
         self.master.grid_columnconfigure(5, weight=1)
+
 
         # MULTIPLE LaTeX windows for different contexts
         self.latex_win_text = None  # Main text AI
@@ -2581,7 +3062,6 @@ DO NOT:
         if self._route_command(text):
             self.logln(f"[DEBUG] Command routed, returning early")
             return
-        # === END COMMAND ROUTING ===
 
         self._sync_image_context_from_window()
 
@@ -2631,6 +3111,8 @@ DO NOT:
 
         self.set_light("speaking")
         role = "vision" if use_vision else "text"
+
+
         self._latex_theme("vision" if role == "vision" else "default")
 
         try:
@@ -2641,7 +3123,6 @@ DO NOT:
                 else:
                     target_win = self.ensure_latex_window("text")
 
-                # self.master.after(0, target_win._prepare_word_spans)
                 play_path = self.cfg["out_wav"]
                 if bool(self.echo_enabled_var.get()):
                     try:
@@ -2655,6 +3136,7 @@ DO NOT:
             self.interrupt_flag = False
             self.set_light("idle")
             self._latex_theme("default")
+
 
             # end query
 
@@ -2712,6 +3194,58 @@ DO NOT:
         except Exception as e:
             # Fail silently if buttons don't exist yet (during initialization)
             pass
+
+    def temporary_mute_for_speech(self, speaking_ai):
+        """
+        Temporarily mute the other AI only during speech - IMPROVED VERSION
+        """
+        with self._speaker_lock:
+            # Store who is currently speaking
+            self._current_speaker = speaking_ai
+
+            # Use a small delay to ensure the mute happens before speech starts
+            def apply_mute():
+                with self._speaker_lock:
+                    # Mute the opposite AI
+                    if speaking_ai == "text":
+                        if not self.vision_ai_muted:
+                            self.vision_ai_muted = True
+                            self.logln(f"[mute] 🔇 Temporarily muted Vision AI (Text AI is speaking)")
+                            self.update_mute_buttons()
+                    elif speaking_ai == "vision":
+                        if not self.text_ai_muted:
+                            self.text_ai_muted = True
+                            self.logln(f"[mute] 🔇 Temporarily muted Text AI (Vision AI is speaking)")
+                            self.update_mute_buttons()
+
+            # Apply the mute after a brief delay to ensure it happens before audio playback
+            self.master.after(50, apply_mute)
+
+    def unmute_after_speech(self):
+        """
+        Unmute the other AI after speech finishes - IMPROVED VERSION
+        """
+
+        def apply_unmute():
+            with self._speaker_lock:
+                if self._current_speaker:
+                    # Unmute the opposite AI
+                    if self._current_speaker == "text":
+                        if self.vision_ai_muted:
+                            self.vision_ai_muted = False
+                            self.logln(f"[mute] 🔊 Unmuted Vision AI (Text AI finished speaking)")
+                    elif self._current_speaker == "vision":
+                        if self.text_ai_muted:
+                            self.text_ai_muted = False
+                            self.logln(f"[mute] 🔊 Unmuted Text AI (Vision AI finished speaking)")
+
+                    self._current_speaker = None
+                    self.update_mute_buttons()
+
+        # Apply the unmute after a brief delay to ensure speech is completely finished
+        self.master.after(100, apply_unmute)
+
+
 
     def toggle_vision_ai_mute(self):
         """Toggle Vision AI mute state - button command"""
@@ -2774,6 +3308,9 @@ DO NOT:
                     self.speaking_flag = True
 
                 self.set_light("speaking")
+
+
+
                 self._latex_theme("vision")
 
                 try:
@@ -3348,6 +3885,8 @@ DO NOT:
             self.set_light("speaking")
 
             role = "vision" if use_vision else "text"
+
+
             self._latex_theme("vision" if role == "vision" else "default")
 
             try:
@@ -3621,6 +4160,14 @@ DO NOT:
         import platform as _plat
         start_time = time.monotonic()
         active_token = token
+        # Determine which AI is speaking based on context
+        if hasattr(self, '_last_was_vision') and self._last_was_vision:
+            speaking_ai = "vision"
+        else:
+            speaking_ai = "text"
+
+        self.temporary_mute_for_speech(speaking_ai)
+
         # Track speech start time for barge-in protection
         self._speech_start_time = start_time
         try:
@@ -3783,6 +4330,7 @@ DO NOT:
         except Exception as e:
             self.logln(f"[warn] playback error: {e}")
         finally:
+            self.unmute_after_speech()
             self.speaking_flag = False
             self.interrupt_flag = False
             self.set_light("idle")
@@ -4776,27 +5324,7 @@ DO NOT:
         except Exception:
             pass
 
-    def auto_mute_other_ai(self, current_ai):
-        """
-        Automatically mute the other AI when one is speaking
-        This prevents both AIs from trying to speak simultaneously
 
-        Args:
-            current_ai: "text" or "vision" - which AI is about to speak
-        """
-        with self._mute_lock:
-            if current_ai == "text":
-                # Text AI is about to speak, so mute Vision AI
-                if not self.vision_ai_muted:
-                    self.vision_ai_muted = True
-                    self.logln("[auto-mute] 🔇 Auto-muted Vision AI (Text AI is speaking)")
-                    self.update_mute_buttons()
-            elif current_ai == "vision":
-                # Vision AI is about to speak, so mute Text AI
-                if not self.text_ai_muted:
-                    self.text_ai_muted = True
-                    self.logln("[auto-mute] 🔇 Auto-muted Text AI (Vision AI is speaking)")
-                    self.update_mute_buttons()
 
     def synthesize_to_wav(self, text, out_wav, role="text"):
         """Synthesize text to WAV with enhanced math speaking"""
@@ -4842,9 +5370,13 @@ DO NOT:
                         voice_id = self.sapi_voice_var.get().split(" | ")[0]
                     eng = pyttsx3.init()
                     eng.setProperty("voice", voice_id)
-                    eng.save_to_file(text, tmp)
+                    # === Speech TTS Speed ===
+                    eng.setProperty("rate", 150 + self.speech_rate_var.get() * 10)
+
+                    eng.save_to_file(clean_text, tmp)
                     eng.runAndWait()
                     eng.stop()
+
 
                     # Wait for file to be written
                     time.sleep(0.2)
@@ -4868,9 +5400,13 @@ DO NOT:
                     voice_id = self.sapi_voice_var.get().split(" | ")[0]
                     eng = pyttsx3.init()
                     eng.setProperty("voice", voice_id)
-                    eng.save_to_file(text, tmp)
+                    # === TTS Speed  ===
+                    eng.setProperty("rate", 150 + self.speech_rate_var.get() * 10)
+
+                    eng.save_to_file(clean_text, tmp)
                     eng.runAndWait()
                     eng.stop()
+
 
                     # Wait for file to be written
                     time.sleep(0.2)
@@ -4904,6 +5440,26 @@ DO NOT:
 
         return False
 
+    def set_speech_rate(self, rate: int):
+        """Set speech rate to specific value"""
+        self.speech_rate_var.set(rate)
+        self.update_rate_display()
+        self.logln(f"[tts] Speech rate set to: {rate}")
+
+    def update_rate_display(self):
+        """Update the rate display label"""
+        rate = self.speech_rate_var.get()
+        if hasattr(self, 'rate_value_label'):
+            if rate < -5:
+                self.rate_value_label.config(text="Very Slow")
+            elif rate < 0:
+                self.rate_value_label.config(text="Slow")
+            elif rate == 0:
+                self.rate_value_label.config(text="Normal")
+            elif rate <= 5:
+                self.rate_value_label.config(text="Fast")
+            else:
+                self.rate_value_label.config(text="Very Fast")
     # === Device Methods ===
     def _device_hostapi_name(self, index):
         try:
@@ -5614,6 +6170,7 @@ DO NOT:
                 self.speaking_flag = True
 
             self.set_light("speaking")
+            self.temporary_mute_for_speech("text")  # Search uses text AI voice
             self.play_wav_with_interrupt(path, token=my_token)
 
         except Exception as e:
