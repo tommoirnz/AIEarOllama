@@ -2,7 +2,8 @@
 # === SUPPRESS HARMLESS WARNINGS ===
 # Add to your existing warning suppression
 import warnings
-#24/10 2025 All working but a few duplicated procedures
+
+# 24/10 2025 All working but a few duplicated procedures
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -156,8 +157,6 @@ def clean_for_tts(text: str, speak_math: bool = True) -> str:
 
     # Use the math speech converter to handle LaTeX math
     cleaned_text = math_speech_converter.make_speakable_text(text, speak_math=speak_math)
-
-
 
     # Additional light cleanup for TTS
     cleaned_text = re.sub(r"[#*_`~>\[\]\(\)-]", "", cleaned_text)
@@ -929,8 +928,6 @@ class CircleAvatarWindow(tk.Toplevel):
         close_btn.bind("<Enter>", on_enter)
         close_btn.bind("<Leave>", on_leave)
 
-
-
     # === MOUSE CONTROLS ===
     def _start_drag(self, e):
         self._drag_data["x"] = e.x_root - self.winfo_x()
@@ -1363,7 +1360,8 @@ class RectAvatarWindow(tk.Toplevel):
         self._scale_factor = 1.0
         self._update_window_size()
         self.log_scale_change()
-        
+
+
 class RectAvatarWindow2(tk.Toplevel):
     """Rectangles (circular window) with enhanced features"""
 
@@ -1484,7 +1482,6 @@ class RectAvatarWindow2(tk.Toplevel):
 
         close_btn.bind("<Enter>", on_enter)
         close_btn.bind("<Leave>", on_leave)
-
 
     # === MOUSE CONTROLS ===
     def _start_drag(self, e):
@@ -1742,6 +1739,248 @@ class RectAvatarWindow2(tk.Toplevel):
         self._update_window_size()
         self.log_scale_change()
 
+
+class RadialPulseAvatar(tk.Toplevel):
+    """Minimalist avatar: red dot with radial lines that pulse with speech"""
+
+    LEVELS = 32
+    BG = "#000000"
+    MASK_COLOR = "#00FF00"
+    DOT_COLOR = "#FF0000"  # Red dot
+    LINE_COLOR = "#FF3333"  # Slightly lighter red for lines
+
+    # Ellipse parameters
+    ELLIPSE_WIDTH_RATIO = 0.6  # Width as fraction of height (vertical ellipse)
+    BASE_HEIGHT = 600  # Base window height
+
+    # Animation parameters
+    MAX_LINES = 24  # Number of radial lines
+    MAX_LINE_LENGTH = 0.8  # Max line length as fraction of window size
+    PULSE_SMOOTHING = 0.3  # Smoothing factor for level changes
+
+    def __init__(self, master):
+        super().__init__(master)
+        self.title("Avatar - Radial Pulse")
+
+        # === ELLIPTICAL WINDOW SETUP ===
+        self._scale_factor = 1.0
+        self._base_height = self.BASE_HEIGHT
+        self._base_width = int(self._base_height * self.ELLIPSE_WIDTH_RATIO)
+
+        try:
+            self.overrideredirect(True)
+            self.wm_attributes("-transparentcolor", self.MASK_COLOR)
+            self.configure(bg=self.MASK_COLOR)
+        except Exception:
+            pass
+
+        self._update_window_size()
+        self.center_on_screen()
+
+        # === DRAG & SCALE SETUP ===
+        self._drag_data = {"x": 0, "y": 0}
+        self.bind("<Button-1>", self._start_drag)
+        self.bind("<B1-Motion>", self._do_drag)
+        self.bind("<MouseWheel>", self._on_mouse_wheel)
+        self.bind("<Button-4>", self._on_mouse_wheel)
+        self.bind("<Button-5>", self._on_mouse_wheel)
+
+        # Canvas setup
+        self.canvas = tk.Canvas(self, bg=self.MASK_COLOR, highlightthickness=0)
+        self.canvas.pack(fill="both", expand=True)
+        self.canvas.bind("<Configure>", lambda e: self.redraw())
+        self.canvas.bind("<MouseWheel>", self._on_mouse_wheel)
+        self.canvas.bind("<Button-4>", self._on_mouse_wheel)
+        self.canvas.bind("<Button-5>", self._on_mouse_wheel)
+
+        # Animation state
+        self.level = 0
+        self._smoothed_level = 0.0
+        self._last_time = time.perf_counter()
+        self._run = True
+
+        # Close button
+        self._add_close_button()
+        self._tick = self.after(16, self._loop)
+
+    def _update_window_size(self):
+        """Update window size based on current scale factor - elliptical shape"""
+        current_height = int(self._base_height * self._scale_factor)
+        current_width = int(self._base_width * self._scale_factor)
+
+        try:
+            current_geometry = self.geometry()
+            if '+' in current_geometry:
+                parts = current_geometry.split('+')
+                if len(parts) == 3:
+                    x_pos, y_pos = int(parts[1]), int(parts[2])
+                    self.geometry(f"{current_width}x{current_height}+{x_pos}+{y_pos}")
+                else:
+                    self.geometry(f"{current_width}x{current_height}")
+            else:
+                self.geometry(f"{current_width}x{current_height}")
+        except Exception:
+            self.geometry(f"{current_width}x{current_height}")
+
+    def center_on_screen(self):
+        """Center the elliptical window on screen"""
+        self.update_idletasks()
+        width = self.winfo_width()
+        height = self.winfo_height()
+        x = (self.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.winfo_screenheight() // 2) - (height // 2)
+        self.geometry(f"{width}x{height}+{x}+{y}")
+
+    def _add_close_button(self):
+        """Add a subtle black close button"""
+        close_btn = tk.Button(self, text="×", font=("Arial", 10),
+                              bg="#000000", fg="#666666", border=0, width=2,
+                              activebackground="#111111", activeforeground="#888888",
+                              command=self.hide)
+        close_btn.place(relx=1.0, rely=0.0, anchor="ne", x=-8, y=8)
+
+        def on_enter(e):
+            close_btn.config(fg="#888888", bg="#111111")
+
+        def on_leave(e):
+            close_btn.config(fg="#666666", bg="#000000")
+
+        close_btn.bind("<Enter>", on_enter)
+        close_btn.bind("<Leave>", on_leave)
+
+    def _start_drag(self, e):
+        self._drag_data["x"] = e.x_root - self.winfo_x()
+        self._drag_data["y"] = e.y_root - self.winfo_y()
+
+    def _do_drag(self, e):
+        self.geometry(f"+{e.x_root - self._drag_data['x']}+{e.y_root - self._drag_data['y']}")
+
+    def _on_mouse_wheel(self, event):
+        SCALE_MIN, SCALE_MAX, SCALE_STEP = 0.3, 2.0, 0.1
+
+        if event.delta > 0 or event.num == 4:
+            new_scale = min(SCALE_MAX, self._scale_factor + SCALE_STEP)
+        else:
+            new_scale = max(SCALE_MIN, self._scale_factor - SCALE_STEP)
+
+        if new_scale != self._scale_factor:
+            self._scale_factor = new_scale
+            self._update_window_size()
+            self.log_scale_change()
+
+    def log_scale_change(self):
+        try:
+            if hasattr(self.master, 'logln'):
+                self.master.logln(f"[avatar] Radial Pulse scale: {self._scale_factor:.1f}x")
+            else:
+                print(f"[avatar] Radial Pulse scale: {self._scale_factor:.1f}x")
+        except:
+            print(f"[avatar] Radial Pulse scale: {self._scale_factor:.1f}x")
+
+    def show(self):
+        self.deiconify()
+        self.lift()
+
+    def hide(self):
+        self.withdraw()
+
+    def destroy(self):
+        self._run = False
+        try:
+            if self._tick:
+                self.after_cancel(self._tick)
+        except Exception:
+            pass
+        super().destroy()
+
+    def set_level(self, level: int):
+        self.level = max(0, min(self.LEVELS - 1, int(level)))
+
+    def _loop(self):
+        """Main animation loop"""
+        if not self._run:
+            return
+
+        now = time.perf_counter()
+        dt = max(0.001, now - self._last_time)
+        self._last_time = now
+
+        # Smooth level changes for fluid animation
+        target_level = self.level / float(self.LEVELS - 1)
+        self._smoothed_level += (target_level - self._smoothed_level) * self.PULSE_SMOOTHING
+
+        self.redraw()
+        self._tick = self.after(16, self._loop)
+
+    def redraw(self):
+        """Draw the radial pulse avatar"""
+        self.canvas.delete("all")
+
+        cw = max(1, self.canvas.winfo_width())
+        ch = max(1, self.canvas.winfo_height())
+        cx, cy = cw // 2, ch // 2
+
+        # Draw elliptical background
+        ellipse_width = int(cw * 0.95)
+        ellipse_height = int(ch * 0.95)
+        self.canvas.create_oval(
+            cx - ellipse_width // 2, cy - ellipse_height // 2,
+            cx + ellipse_width // 2, cy + ellipse_height // 2,
+            fill=self.BG, outline=self.BG
+        )
+
+        # Calculate pulse intensity with some variation for organic feel
+        base_intensity = self._smoothed_level
+        pulse_intensity = base_intensity * (0.8 + 0.4 * math.sin(time.perf_counter() * 8))
+
+        # Draw central red dot (size varies slightly with intensity)
+        dot_radius = max(2, int(4 + pulse_intensity * 6))
+        self.canvas.create_oval(
+            cx - dot_radius, cy - dot_radius,
+            cx + dot_radius, cy + dot_radius,
+            fill=self.DOT_COLOR, outline=self.DOT_COLOR
+        )
+
+        # Draw radial lines
+        if pulse_intensity > 0.05:  # Only draw lines when there's significant audio
+            num_lines = self.MAX_LINES
+            max_line_length = min(cw, ch) * self.MAX_LINE_LENGTH * pulse_intensity
+
+            for i in range(num_lines):
+                angle = (2 * math.pi * i) / num_lines
+
+                # Add slight randomness to line lengths for organic feel
+                line_variation = 0.7 + 0.6 * math.sin(angle * 3 + time.perf_counter() * 6)
+                line_length = max_line_length * line_variation
+
+                # Calculate line end point
+                end_x = cx + line_length * math.cos(angle)
+                end_y = cy + line_length * math.sin(angle)
+
+                # Line width varies with intensity and angle
+                line_width = max(1, int(1 + pulse_intensity * 3))
+
+                # Draw the radial line
+                self.canvas.create_line(
+                    cx, cy, end_x, end_y,
+                    fill=self.LINE_COLOR,
+                    width=line_width,
+                    capstyle=tk.ROUND
+                )
+
+    # Public scale methods
+    def set_scale(self, scale_factor: float):
+        self._scale_factor = max(0.3, min(2.0, scale_factor))
+        self._update_window_size()
+        self.log_scale_change()
+
+    def get_scale(self) -> float:
+        return self._scale_factor
+
+    def reset_scale(self):
+        self._scale_factor = 1.0
+        self._update_window_size()
+        self.log_scale_change()
 
 
 # === WEB SEARCH WINDOW CLASS ===
@@ -2365,7 +2604,6 @@ class App:
                 or "qwen2.5-vl:7b"
         )
 
-
         # === ADD SLEEP VARIABLES RIGHT HERE ===
         self.sleep_mode = False
         self.sleep_commands = ["sleep", "go to sleep", "rest mode", "silence", "stop listening"]
@@ -2398,8 +2636,6 @@ class App:
         self.latex_append_mode = tk.BooleanVar(value=False)
         self.speak_math_var = tk.BooleanVar(value=True)
         self.avatar_kind = tk.StringVar(value="Rings")
-
-
 
         self._last_search_query = ""
         self.search_win = None
@@ -2434,7 +2670,6 @@ class App:
         self._current_speaker = None  # Track which AI is currently speaking
         self._speaker_lock = threading.Lock()
 
-
         self._duck_log = bool(self.cfg.get("duck_log", False))
         self._chime_played = False
         self._last_chime_ts = 0.0
@@ -2445,7 +2680,6 @@ class App:
 
         self._duck_gain = 1.0
         self._duck_active = False
-
 
         # === NEW: Vision state initialization ===
         self._last_image_path = None
@@ -2482,7 +2716,7 @@ class App:
         self.stop_btn = ttk.Button(top, text="Stop", command=self.stop, state=tk.DISABLED)
 
         self.reset_btn = ttk.Button(top, text="Reset Chat", command=self.reset_chat)
-        self.reset_btn.grid(row=0, column=12, padx=6, sticky="w")
+        self.reset_btn.grid(row=2, column=6, padx=6, sticky="w")
 
         self.start_btn.grid(row=0, column=1, padx=6)
         self.stop_btn.grid(row=0, column=2, padx=6)
@@ -2500,7 +2734,6 @@ class App:
 
         # Close Windows button -
         ttk.Button(top, text="Close Windows", command=self.close_all_windows).grid(row=2, column=9, padx=6)
-
 
         # Button container
         mute_buttons_frame = ttk.Frame(mute_frame)
@@ -2568,7 +2801,8 @@ class App:
         ttk.Label(_avatar_bar, text="Avatar").pack(anchor="n")
         self.avatar_combo = ttk.Combobox(
             _avatar_bar, textvariable=self.avatar_kind, state="readonly",
-            width=14, values=["Rings", "Rectangles", "Rectangles 2"]
+            width=14, values=["Rings", "Rectangles", "Rectangles 2", "Radial Pulse"]
+
         )
         self.avatar_combo.current(0)
         self.avatar_combo.pack(pady=(2, 4), anchor="n")
@@ -2632,7 +2866,6 @@ class App:
             self.out_combo.current(0)
         self.out_combo.grid(row=3, column=1, columnspan=9, sticky="we", padx=6, pady=6)
 
-
         # SAPI voices
         self.sapi_voice_var = tk.StringVar()
         try:
@@ -2681,7 +2914,6 @@ class App:
         # Initialize the display for fast speed
         self.update_rate_display()
 
-
         rate_slider = ttk.Scale(
             self.master,
             from_=-10,
@@ -2725,7 +2957,6 @@ class App:
         self.master.grid_columnconfigure(9, weight=1)
         self.master.grid_columnconfigure(1, weight=1)
         self.master.grid_columnconfigure(5, weight=1)
-
 
         # MULTIPLE LaTeX windows for different contexts
         self.latex_win_text = None  # Main text AI
@@ -3112,7 +3343,6 @@ DO NOT:
         self.set_light("speaking")
         role = "vision" if use_vision else "text"
 
-
         self._latex_theme("vision" if role == "vision" else "default")
 
         try:
@@ -3136,7 +3366,6 @@ DO NOT:
             self.interrupt_flag = False
             self.set_light("idle")
             self._latex_theme("default")
-
 
             # end query
 
@@ -3245,8 +3474,6 @@ DO NOT:
         # Apply the unmute after a brief delay to ensure speech is completely finished
         self.master.after(100, apply_unmute)
 
-
-
     def toggle_vision_ai_mute(self):
         """Toggle Vision AI mute state - button command"""
         with self._mute_lock:
@@ -3309,8 +3536,6 @@ DO NOT:
 
                 self.set_light("speaking")
 
-
-
                 self._latex_theme("vision")
 
                 try:
@@ -3346,12 +3571,14 @@ DO NOT:
 
         self._last_search_query = search_query
         self.logln(f"[AI Search] Query: {search_query}")
-        # === ADD VOICE FEEDBACK FOR AI-TRIGGERED SEARCHES ===
-        self.speak_search_status(f"Searching for {search_query}")
+        # ===  USE THE ORIGINAL QUERY, DON'T LET AI MODIFY IT ===
+        actual_search_query = search_query  # Use exactly what was provided
+
         try:
-            # Use your existing brave_search method
-            results = self.brave_search(search_query, 6)
-            search_summary = f"Search results for: {search_query}\n\n"
+            # Use your existing brave_search method WITH THE ORIGINAL QUERY
+            results = self.brave_search(actual_search_query, 6)
+            search_summary = f"Search results for: {actual_search_query}\n\n"
+
 
             # Process results using your existing methods
             for i, item in enumerate(results, 1):
@@ -3476,9 +3703,6 @@ DO NOT:
 
         except Exception as e:
             self.logln(f"[vision][cache] ❌ {source}: failed to store reply: {e}")
-
-
-
 
     def _refresh_last_reply(self):
         """Debug method to show what's currently in the last vision reply."""
@@ -3885,7 +4109,6 @@ DO NOT:
             self.set_light("speaking")
 
             role = "vision" if use_vision else "text"
-
 
             self._latex_theme("vision" if role == "vision" else "default")
 
@@ -4424,7 +4647,6 @@ DO NOT:
             self.toggle_vision_ai_mute()
             return True
 
-
         # === SEARCH VOICE COMMANDS ===
         search_commands = [
             "search for", "search", "look up", "information on", "find information about",
@@ -4681,7 +4903,6 @@ DO NOT:
             self.close_all_windows()
             return True
 
-
         return False
 
     # routine ends here
@@ -4719,7 +4940,6 @@ DO NOT:
         self.logln(f"[close] Closed {windows_closed} windows (avatar remains open)")
         self.play_chime(freq=660, ms=120, vol=0.15)  # Confirmation beep
         return windows_closed
-
 
     def enter_sleep_mode(self):
         """Enter sleep mode - ignore all voice input"""
@@ -5195,6 +5415,9 @@ DO NOT:
                 self.avatar_win = RectAvatarWindow(self.master)  # NEW NAME
             elif kind == "Rectangles 2":
                 self.avatar_win = RectAvatarWindow2(self.master)  # NEW NAME
+            elif kind == "Radial Pulse":  # ADD THIS CASE
+                self.avatar_win = RadialPulseAvatar(self.master)
+
             else:
                 # Fallback to Rings
                 self.avatar_win = CircleAvatarWindow(self.master)
@@ -5324,8 +5547,6 @@ DO NOT:
         except Exception:
             pass
 
-
-
     def synthesize_to_wav(self, text, out_wav, role="text"):
         """Synthesize text to WAV with enhanced math speaking"""
 
@@ -5377,7 +5598,6 @@ DO NOT:
                     eng.runAndWait()
                     eng.stop()
 
-
                     # Wait for file to be written
                     time.sleep(0.2)
 
@@ -5406,7 +5626,6 @@ DO NOT:
                     eng.save_to_file(clean_text, tmp)
                     eng.runAndWait()
                     eng.stop()
-
 
                     # Wait for file to be written
                     time.sleep(0.2)
@@ -5460,6 +5679,7 @@ DO NOT:
                 self.rate_value_label.config(text="Fast")
             else:
                 self.rate_value_label.config(text="Very Fast")
+
     # === Device Methods ===
     def _device_hostapi_name(self, index):
         try:
@@ -5598,6 +5818,8 @@ DO NOT:
         brave_key = os.getenv("BRAVE_KEY")
         if not brave_key:
             raise RuntimeError("No BRAVE_KEY found in environment")
+        # === Logs we are searching the Internet ===
+        self.logln(f"[SEARCH] 🚀 Calling Brave API: '{query}'")
 
         endpoint = "https://api.search.brave.com/res/v1/web/search"
         headers = {"X-Subscription-Token": brave_key, "User-Agent": "LocalAI-ResearchBot/1.0"}
@@ -5612,6 +5834,9 @@ DO NOT:
         for w in (data.get("web", {}) or {}).get("results", []):
             out.append(
                 Item(title=w.get("title", "No title"), url=w.get("url", ""), snippet=w.get("description", "")))
+            # === check what its searching  ===
+            self.logln(f"[BRAVE API] ✅ Found {len(out)} results for '{query}'")
+
         return out
 
     def polite_fetch(self, url: str):
