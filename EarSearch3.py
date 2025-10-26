@@ -29,6 +29,8 @@ from tkinter import ttk, messagebox
 from io import BytesIO
 from PIL import Image, ImageTk
 import matplotlib
+from status_light_window import StatusLightWindow  # Adjust the filename if needed
+
 
 # This uses two models and a different Json file and handles images as well
 # Look for the Json file  called Json2. You will need two models as per the Json file loaded into ollama
@@ -314,6 +316,35 @@ class LatexWindow(tk.Toplevel):
         self.withdraw()
 
     # ==================== ESSENTIAL WINDOW METHODS ====================
+    def copy_raw_latex(self):
+        """Copy raw LaTeX source to clipboard with proper document structure"""
+        try:
+            content = self._last_text or ""
+
+            if content.strip():
+                # Create a complete LaTeX document
+                latex_document = f"""\\documentclass{{article}}
+    \\usepackage{{amsmath}}
+    \\usepackage{{amssymb}}
+    \\usepackage{{graphicx}}
+    \\usepackage{{hyperref}}
+    \\begin{{document}}
+
+    {content}
+
+    \\end{{document}}"""
+
+                self.clipboard_clear()
+                self.clipboard_append(latex_document)
+                self._log("[latex] Complete LaTeX document copied to clipboard")
+            else:
+                self.clipboard_clear()
+                self.clipboard_append("")
+                self._log("[latex] No content to copy")
+
+        except Exception as e:
+            self._log(f"[latex] copy raw failed: {e}")
+
 
     def show(self):
         """Show the window"""
@@ -475,14 +506,6 @@ class LatexWindow(tk.Toplevel):
         finally:
             self._menu.grab_release()
 
-    def copy_raw_latex(self):
-        """Copy raw LaTeX source to clipboard"""
-        try:
-            self.clipboard_clear()
-            self.clipboard_append(self._last_text or "")
-            self._log("[latex] raw source copied to clipboard")
-        except Exception as e:
-            self._log(f"[latex] copy raw failed: {e}")
 
     # ==================== LATEX RENDERING METHODS ====================
 
@@ -2113,27 +2136,37 @@ class WebSearchWindow(tk.Toplevel):
                 print(error_msg)
 
     def copy_raw_latex(self):
-        """Copy raw LaTeX using main app's system"""
+        """Copy raw LaTeX source to clipboard with proper document structure"""
         try:
-            if hasattr(self, 'main_app') and self.main_app:
-                self.main_app.latex_win_search.copy_raw_latex()
-            elif hasattr(self, 'master') and hasattr(self.master, 'ensure_latex_window'):
-                latex_win = self.master.ensure_latex_window("search")
-                latex_win.copy_raw_latex()
-        except Exception as e:
-            error_msg = f"[search] copy raw failed: {e}"
-            if hasattr(self, 'logln'):
-                self.logln(error_msg)
-            else:
-                print(error_msg)
+            content = self._last_text or ""
 
-    def copy_raw_latex(self):
-        """Copy raw LaTeX to clipboard"""
-        self._ensure_latex_window()
-        try:
-            self.latex_win.copy_raw_latex()
+            if content.strip():
+                # Create a complete LaTeX document
+                latex_document = f"""\\documentclass{{article}}
+    \\usepackage{{amsmath}}
+    \\usepackage{{amssymb}}
+    \\usepackage{{graphicx}}
+    \\usepackage{{hyperref}}
+    \\begin{{document}}
+
+    {content}
+
+    \\end{{document}}"""
+
+                self.clipboard_clear()
+                self.clipboard_append(latex_document)
+                self._log("[latex] Complete LaTeX document copied to clipboard")
+            else:
+                self.clipboard_clear()
+                self.clipboard_append("")
+                self._log("[latex] No content to copy")
+
         except Exception as e:
             self._log(f"[latex] copy raw failed: {e}")
+
+
+
+
 
     def preview_latex(self, content: str, context="text"):
         """Preview LaTeX content with append/replace option"""
@@ -2280,6 +2313,11 @@ class WebSearchWindow(tk.Toplevel):
             self.btn.config(state="normal")
 
     def _thread_run(self, query: str):
+        # === SEARCH PROGRESS AUDIBLE INDICATOR ===
+        if hasattr(self.master, 'start_search_progress_indicator'):
+            self.master.start_search_progress_indicator()
+
+
         try:
             results = self.brave_search(query, 6)
             self.queue.put(("searched", len(results)))
@@ -2326,6 +2364,10 @@ class WebSearchWindow(tk.Toplevel):
         except Exception as e:
             self.log(f"Search thread error: {e}")
             self.queue.put(("error", str(e)))
+        # === STOP ON ERROR ===
+        if hasattr(self.master, 'stop_search_progress_indicator'):
+            self.master.stop_search_progress_indicator()
+
 
     def _create_final_summary(self) -> str:
         """Create a consolidated summary of all search results"""
@@ -2394,6 +2436,9 @@ class WebSearchWindow(tk.Toplevel):
                         self.in_progress = False
                         self.btn.config(state="normal")
                         self.play_dong()
+                        # === STOP PROGRESS INDICATOR ===
+                        if hasattr(self.master, 'stop_search_progress_indicator'):
+                            self.master.stop_search_progress_indicator()
 
                         if self._all_results:
                             summary_text = self._create_final_summary()
@@ -2417,6 +2462,9 @@ class WebSearchWindow(tk.Toplevel):
                         self.in_progress = False
                         self.btn.config(state="normal")
                         self.log(f"Error: {payload}")
+                    # ===  STOP ON ERROR ===
+                    if hasattr(self.master, 'stop_search_progress_indicator'):
+                        self.master.stop_search_progress_indicator()
 
                 except Exception as e:
                     self.log(f"Error processing queue message {msg}: {e}")
@@ -2427,6 +2475,10 @@ class WebSearchWindow(tk.Toplevel):
             self.log(f"Queue polling error: {e}")
             self.in_progress = False
             self.btn.config(state="normal")
+        # ===  STOP ON GENERAL ERROR ===
+        if hasattr(self.master, 'stop_search_progress_indicator'):
+            self.master.stop_search_progress_indicator()
+
 
         if self.winfo_exists():
             self.after(120, self._poll_queue)
@@ -2640,6 +2692,16 @@ class App:
         self._last_search_query = ""
         self.search_win = None
 
+        # External light window
+        self.external_light_win = None
+
+        # === SEARCH PROGRESS VARIABLES ===
+        self._search_in_progress = False
+        self._search_progress_timer = None
+        self._search_progress_count = 0
+        self._last_search_progress_time = 0
+        # === END SEARCH PROGRESS VARIABLES ===
+
         # === NEW: Unified playback fencing ===
         self._play_lock = threading.Lock()
         self._play_token = 0
@@ -2720,6 +2782,11 @@ class App:
 
         self.start_btn.grid(row=0, column=1, padx=6)
         self.stop_btn.grid(row=0, column=2, padx=6)
+
+        # External light indicator
+        self.external_light_btn = ttk.Button(top, text="External Light", command=self.toggle_external_light)
+        self.external_light_btn.grid(row=2, column=5, padx=6)  # Adjust column as needed
+
 
         # STOP SPEAKING button
         self.stop_speech_btn = ttk.Button(top, text="Stop Speaking", command=self.stop_speaking)
@@ -2914,19 +2981,7 @@ class App:
         # Initialize the display for fast speed
         self.update_rate_display()
 
-        rate_slider = ttk.Scale(
-            self.master,
-            from_=-10,
-            to=10,
-            variable=self.speech_rate_var,
-            orient="horizontal",
-            length=180
-        )
-        rate_slider.grid(row=6, column=1, columnspan=3, sticky="we", padx=6, pady=4)
 
-        # Current value display
-        self.rate_value_label = ttk.Label(self.master, text="Normal")
-        self.rate_value_label.grid(row=6, column=4, sticky="w", padx=5)
 
         # Preset buttons
         preset_frame = ttk.Frame(self.master)
@@ -3047,6 +3102,25 @@ class App:
         current_day = current_datetime.strftime("%A")
 
         enhanced_system_prompt = f"""{sys_prompt}
+TTS SPEAKING GUIDELINES FOR MATHEMATICS:
+- When transitioning from regular text to equations, add a brief pause
+- After reading equations, add a slight pause before continuing with text
+- Speak mathematical expressions clearly and deliberately
+- For complex equations, break them into logical parts
+- Use phrases like "the equation shows..." or "mathematically speaking..." to introduce formulas
+- when reading a list of instructions or solutions that are numbered, put a pause between the number and the explanation.
+EXAMPLE: 
+1.We do this...  Put a pause after the 1. Make it sound like 1, ...
+2.Do that... put a pause after the 2
+3.Somethings else...put a pause after the 3
+Put pauses in such instances after the numbers.
+
+ANOTHER EXAMPLE:
+Instead of: "The solution is x=5 and then we continue"
+Use: "The solution is... x equals five... and then we continue"
+
+Instead of: "We have f(x)=x²+2x+1 which is a parabola"  
+Use: "We have the function... f of x equals x squared plus two x plus one... which describes a parabola"
 
     BACKGROUND KNOWLEDGE: You have access to real-time information. The current date is {current_date} and the time is {current_time}.
 CURRENT REAL DATE: {current_day}, {current_date} at {current_time}
@@ -3142,38 +3216,6 @@ DO NOT:
         self._ui_eased_ratio = 0.0
         self._ui_gamma = float(self.cfg.get("highlight_gamma", 1.12))
 
-    def toggle_search_window(self, ensure_visible=False):
-        """Toggle web search window - FIXED VERSION
-        Args:
-            ensure_visible: If True, always show the window (used for voice searches)
-        """
-        try:
-            if self.search_win is None or not self.search_win.winfo_exists():
-                self.search_win = WebSearchWindow(self.master, log_fn=self.logln)
-                # Bind ALL the search methods to this app instance
-                self.search_win.brave_search = self.brave_search
-                self.search_win.polite_fetch = self.polite_fetch
-                self.search_win.guess_pubdate = self.guess_pubdate
-                self.search_win.extract_images = self.extract_images
-                self.search_win.extract_readable = self.extract_readable
-                self.search_win.summarise_with_qwen = self.summarise_with_qwen
-                self.search_win.synthesize_search_results = self.synthesize_search_results
-                self.search_win.normalize_query = self.normalize_query
-                self.search_win.play_search_results = self.play_search_results
-
-            # Always show the window if ensure_visible is True (for voice searches)
-            # or if we're toggling and it's currently withdrawn
-            if ensure_visible or self.search_win.state() == "withdrawn":
-                self.search_win.deiconify()
-                self.search_win.lift()
-                self.search_win.focus_set()
-            else:
-                # Only hide if not forced to be visible
-                if not ensure_visible:
-                    self.search_win.withdraw()
-
-        except Exception as e:
-            self.logln(f"[search] window error: {e}")
 
     def update_speak_math_setting(self):
         """Update the speak math setting - can be called when the checkbox changes"""
@@ -3564,21 +3606,17 @@ DO NOT:
         threading.Thread(target=_worker, daemon=True).start()
 
     def handle_ai_search_request(self, search_query: str) -> str:
-        """
-        Handle search requests from the AI using the existing web search system
-        Returns search results as text that the AI can use
-        """
-
+        """Handle search requests from the AI using the existing web search system"""
         self._last_search_query = search_query
         self.logln(f"[AI Search] Query: {search_query}")
-        # ===  USE THE ORIGINAL QUERY, DON'T LET AI MODIFY IT ===
-        actual_search_query = search_query  # Use exactly what was provided
+
+        # === ADD THIS LINE: START PROGRESS INDICATOR ===
+        self.start_search_progress_indicator()
 
         try:
             # Use your existing brave_search method WITH THE ORIGINAL QUERY
-            results = self.brave_search(actual_search_query, 6)
-            search_summary = f"Search results for: {actual_search_query}\n\n"
-
+            results = self.brave_search(search_query, 6)
+            search_summary = f"Search results for: {search_query}\n\n"
 
             # Process results using your existing methods
             for i, item in enumerate(results, 1):
@@ -3607,10 +3645,16 @@ DO NOT:
                     search_summary += f"Error processing: {str(e)}\n\n"
                     continue
 
+            # ===  STOP PROGRESS INDICATOR ON SUCCESSFUL COMPLETION ===
+            self.stop_search_progress_indicator()
             return search_summary
 
         except Exception as e:
+            # ===  STOP PROGRESS INDICATOR ON ERROR ===
+            self.stop_search_progress_indicator()
             return f"Search failed: {str(e)}"
+
+
 
     def _process_ai_response(self, response: str, from_search_method: bool = False) -> str:
         """
@@ -3860,6 +3904,10 @@ DO NOT:
         self.start_btn.config(state=tk.NORMAL)
         self.stop_btn.config(state=tk.DISABLED)
         self.set_light("idle")
+
+        # Close status light when stopping
+        self.close_status_light()
+
         try:
             if self.barge_stream and self.barge_stream.active:
                 self.barge_stream.stop()
@@ -4341,6 +4389,8 @@ DO NOT:
             return
 
         self.logln(f"[search-status] 🔊 Processing: {message}")
+        # ===  START AUDIBLE PROGRESS INDICATOR ===
+        self.start_search_progress_indicator()
 
         try:
             # Clean the text for TTS
@@ -4912,7 +4962,10 @@ DO NOT:
         """Close all secondary windows except avatar and main window"""
         windows_closed = 0
 
-        # List of windows to close
+        # Close status light
+        self.close_status_light()
+
+        # List of other windows to close
         windows_to_close = [
             'latex_win_text', 'latex_win_vision', 'latex_win_search', 'latex_win',
             'search_win', '_img_win', '_echo_win'
@@ -4927,19 +4980,16 @@ DO NOT:
                     elif hasattr(window, 'withdraw'):
                         window.withdraw()
                     else:
-                        window.iconify()  # minimize as fallback
+                        window.iconify()
                     windows_closed += 1
-
-                    # Stop camera if image window is open
-                    if window_name == '_img_win' and hasattr(window, 'stop_camera'):
-                        window.stop_camera()
-
                 except Exception as e:
                     self.logln(f"[close] Error closing {window_name}: {e}")
 
         self.logln(f"[close] Closed {windows_closed} windows (avatar remains open)")
-        self.play_chime(freq=660, ms=120, vol=0.15)  # Confirmation beep
+        self.play_chime(freq=660, ms=120, vol=0.15)
         return windows_closed
+
+
 
     def enter_sleep_mode(self):
         """Enter sleep mode - ignore all voice input"""
@@ -5135,9 +5185,199 @@ DO NOT:
             self.set_light("idle")
 
     def set_light(self, mode):
+        # Track previous mode to detect transitions
+        previous_mode = getattr(self, '_previous_light_mode', 'idle')
+
         color = {"idle": "#f1c40f", "listening": "#2ecc71", "speaking": "#e74c3c"}.get(mode, "#f1c40f")
-        self.light.itemconfig(self.circle, fill=color)
+
+        # Update main light ONLY if external light is not active
+        if self.external_light_win is None or not self.external_light_win.winfo_exists() or self.external_light_win.state() == "withdrawn":
+            self.light.itemconfig(self.circle, fill=color)
+        else:
+            # External light is active, keep main light black
+            self.light.itemconfig(self.circle, fill="#000000")
+
         self.state.set(mode)
+
+        # Update external light if it exists and is visible
+        try:
+            if (self.external_light_win and
+                    self.external_light_win.winfo_exists() and
+                    self.external_light_win.state() != "withdrawn"):
+                self.external_light_win.set_light(color)
+        except Exception as e:
+            self.logln(f"[light] color update error: {e}")
+
+        # Play beep when transitioning from any state to listening (green) mode
+        if mode == "listening" and previous_mode != "listening":
+            self.play_chime(freq=660, ms=120, vol=0.12)
+            self.logln("[status] ✅ Ready to receive requests")
+
+        # Store current mode for next comparison
+        self._previous_light_mode = mode
+
+
+
+    def toggle_external_light(self):
+        """Toggle the external light window on/off"""
+        try:
+            if self.external_light_win is None or not self.external_light_win.winfo_exists():
+                self.external_light_win = StatusLightWindow(self.master)
+                # Set initial color to match current state
+                current_mode = self.state.get()
+                color = {"idle": "#f1c40f", "listening": "#2ecc71", "speaking": "#e74c3c"}.get(current_mode, "#f1c40f")
+                self.external_light_win.set_light(color)
+                self.external_light_win.show()
+
+                # Hide the main light in the main window
+                self.light.itemconfig(self.circle, fill="#000000")  # Make main light black
+                self.logln("[light] Status light opened - main light hidden")
+            else:
+                if self.external_light_win.state() == "withdrawn":
+                    self.external_light_win.show()
+                    # Hide main light
+                    self.light.itemconfig(self.circle, fill="#000000")
+                    self.logln("[light] Status light shown - main light hidden")
+                else:
+                    self.external_light_win.hide()
+                    # Restore main light
+                    current_mode = self.state.get()
+                    color = {"idle": "#f1c40f", "listening": "#2ecc71", "speaking": "#e74c3c"}.get(current_mode,
+                                                                                                   "#f1c40f")
+                    self.light.itemconfig(self.circle, fill=color)
+                    self.logln("[light] Status light hidden - main light restored")
+        except Exception as e:
+            self.logln(f"[light] toggle error: {e}")
+
+
+# ==== AUDIBLE PROGRESS SOUND ===
+    def start_search_progress_indicator(self):
+        """Start periodic progress tones for ongoing searches"""
+        self._search_in_progress = True
+        self._search_progress_count = 0
+        self._last_search_progress_time = time.time()
+        self._play_search_progress_beep()
+        self._schedule_next_progress_beep()
+
+    def stop_search_progress_indicator(self):
+        """Stop the progress indicator when search completes"""
+        if self._search_in_progress:
+            self.logln(f"[search] Stopping progress indicator (was at {self._search_progress_count} beeps)")
+        self._search_in_progress = False
+        if self._search_progress_timer:
+            try:
+                self.master.after_cancel(self._search_progress_timer)
+                self.logln("[search] Progress timer cancelled")
+            except:
+                pass
+            self._search_progress_timer = None
+
+
+    def set_external_light_color(self, color):
+        """Set the color of the external light"""
+        try:
+            if (self.external_light_win and
+                    self.external_light_win.winfo_exists() and
+                    self.external_light_win.state() != "withdrawn"):
+                self.external_light_win.set_color(color)
+        except Exception as e:
+            self.logln(f"[light] color change error: {e}")
+
+    def close_status_light(self):
+        """Close the status light window"""
+        try:
+            if self.status_light_win and self.status_light_win.winfo_exists():
+                self.status_light_win.destroy()
+                self.status_light_win = None
+                self.logln("[light] Status light closed")
+        except Exception as e:
+            self.logln(f"[light] close error: {e}")
+
+
+
+    def _play_search_progress_beep(self):
+        """Play a progress beep with variation based on search stage"""
+        if not self._search_in_progress:
+            return
+
+        # === SAFETY CHECK: Stop if too many beeps ===
+        if self._search_progress_count > 50:
+            self.logln("[search] Safety stop: too many progress beeps")
+            self.stop_search_progress_indicator()
+            return
+
+        self._search_progress_count += 1
+
+        # Different beep patterns based on search progress
+        if self._search_progress_count == 1:
+            # First beep - gentle start
+            freq = 440  # A4
+            duration = 0.08
+            vol = 0.1
+        elif self._search_progress_count <= 3:
+            # Early progress - slightly higher
+            freq = 523  # C5
+            duration = 0.08
+            vol = 0.12
+        elif self._search_progress_count <= 6:
+            # Middle stage - ascending pattern
+            freq = 587  # D5
+            duration = 0.09
+            vol = 0.14
+        else:
+            # Extended search - more urgent but not annoying
+            freq = 659  # E5
+            duration = 0.1
+            vol = 0.16
+
+        try:
+            fs = 16000
+            t = np.linspace(0, duration, int(fs * duration), endpoint=False)
+
+            # Create a pleasant beep with soft attack/decay
+            beep = vol * np.sin(2 * np.pi * freq * t)
+
+            # Smooth fade
+            fade = int(0.015 * fs)
+            if fade > 0:
+                beep[:fade] *= np.linspace(0, 1, fade)
+                beep[-fade:] *= np.linspace(1, 0, fade)
+
+            # Play non-blocking
+            out_dev = self._selected_out_device_index()
+            try:
+                sd.play(beep, fs, blocking=False, device=out_dev)
+            except Exception:
+                sd.play(beep, fs, blocking=False)
+
+            self.logln(f"[search] Progress indicator #{self._search_progress_count}")
+
+        except Exception as e:
+            self.logln(f"[search] Progress beep error: {e}")
+
+
+    def _schedule_next_progress_beep(self):
+        """Schedule the next progress beep with variable timing"""
+        if not self._search_in_progress:
+            return
+
+        # Variable timing: more frequent as search takes longer
+        if self._search_progress_count <= 3:
+            interval = 8000  # 8 seconds for first few beeps
+        elif self._search_progress_count <= 6:
+            interval = 6000  # 6 seconds for middle stage
+        else:
+            interval = 5000  # 5 seconds for extended searches
+
+        self._search_progress_timer = self.master.after(interval, self._progress_beep_sequence)
+
+    def _progress_beep_sequence(self):
+        """The actual sequence called by the timer"""
+        if self._search_in_progress:
+            self._play_search_progress_beep()
+            self._schedule_next_progress_beep()
+
+    # === END SEARCH PROGRESS METHODS ===
 
     def _toggle_echo_window(self):
         try:
@@ -5876,31 +6116,7 @@ DO NOT:
             return t.get("datetime") or t.text.strip()
         return None
 
-    def extract_images(self, html: str, base_url: str, limit: int = 3):
-        urls = []
-        try:
-            soup = BeautifulSoup(html, "lxml")
-        except Exception:
-            return urls
 
-        for img in soup.find_all("img"):
-            src = img.get("src") or ""
-            if not src or src.startswith("data:") or re.search(r"\.svg($|\?)", src, re.I):
-                continue
-
-            alt = (img.get("alt") or "").lower()
-            src_l = src.lower()
-            if any(k in src_l for k in ["sprite", "icon", "logo", "ads", "advert", "pixel"]):
-                continue
-            if any(k in alt for k in ["icon", "logo"]):
-                continue
-
-            full = urljoin(base_url, src)
-            if full not in urls:
-                urls.append(full)
-            if len(urls) >= limit:
-                break
-        return urls
 
     def summarise_for_ai_search(self, text: str, url: str, pubdate: str):
         """Enhanced summarization that preserves practical information"""
@@ -6337,6 +6553,9 @@ DO NOT:
     def synthesize_search_results(self, text: str):
         """Speak search results using DEDICATED search window"""
 
+        # === STOP PROGRESS INDICATOR IMMEDIATELY ===
+        self.stop_search_progress_indicator()
+
         def _tts_worker():
             if not text or not text.strip():
                 return
@@ -6350,7 +6569,6 @@ DO NOT:
                 self.preview_search_results(text)
 
                 # Continue with TTS...
-                # clean = clean_for_tts(reply, speak_math=self.speak_math_var.get())
                 output_path = "out/search_results.wav"
 
                 if self.synthesize_to_wav(clean_tts_text, output_path, role="text"):
@@ -6381,6 +6599,7 @@ DO NOT:
 
         tts_thread = threading.Thread(target=_tts_worker, daemon=True)
         tts_thread.start()
+
 
     # End syththesise_search
 
