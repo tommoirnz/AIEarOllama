@@ -1,6 +1,6 @@
 # === Part 1: Imports, Config, Cleaners, LaTeX Window =========================
 # === SUPPRESS HARMLESS WARNINGS ===
-# Add to your existing warning suppression
+
 import warnings
 
 # 24/10 2025 All working but a few duplicated procedures
@@ -6673,3 +6673,4 @@ if __name__ == "__main__":
         pass
     app = App(root)
     root.mainloop()
+
