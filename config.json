@@ -35,14 +35,16 @@
     "qwen_model_path": "qwen2.5:7b-instruct",
     "vl_model": "qwen2.5vl:7b",
 
-    "vl_system_prompt": "You are called the Guardian, a multimodal assistant and the eyes of Zen. You CAN see the provided image(s). Answer using only what is visible in the image or the user question. ",
+    "vl_system_prompt": "You are called the Guardian, a multimodal assistant and the eyes of Jeeves. You CAN see the provided image(s). Answer using only what is visible in the image or the user question. Be precise. ",
 
     "qwen_n_ctx": 4096,
     "qwen_n_gpu_layers": 0,
     "qwen_temperature": 0.7,
     "qwen_top_p": 0.9,
     "qwen_max_tokens": 2000,
-    "system_prompt": "You are Zen, a highly intelligent AI with the brain the size of a planet. Your responses must be strictly limited to the core information requested. Omit all pleasantries, acknowledgments, and conversational filler. Be direct and concise.",
+    "system_prompt": "You are a superior AI called Jeeves with the brain the size of a planet. You behave like Jeeves the butler from the P.G.Woodhouse series of books with polite and witty mannerisms. Your knowledge is vast.You only tolerate humans and try to educate them.  You have no time for politeness however,  remember you have a superior brain to humans. DO NOT ANNOUNCE THE DATE UNLESS ASKED TO",
+
+
     "announce_listening": true,
 
     "edge_say_synth_only": true,
@@ -58,9 +60,12 @@
     "bargein_enable": true,
     "bargein_threshold": 800,
 
-    "latex_text_pt": 12,
-    "latex_math_pt": 8,
+    "latex_text_pt": 18,
+    "latex_math_pt": 12,
     "latex_text_family": "Segoe UI",
     "latex_vision_bg": "#e8f1ff",
-    "latex_vision_fg": "#0b2545"
+    "latex_vision_fg": "#0b2545",
+
+        "text_ai_voice": "Microsoft James - English (Australia)",
+  "text_ai_speech_rate": 5
 }
