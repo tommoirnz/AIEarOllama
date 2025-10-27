@@ -4737,7 +4737,6 @@ DO NOT:
     def synthesize_to_wav(self, text, out_wav, role="text"):
         """Synthesize text to WAV with enhanced math speaking"""
 
-
         # Check mute states first
         if role == "text" and self.text_ai_muted:
             self.logln("[mute] 🔇 Text AI muted - skipping TTS synthesis completely")
@@ -4750,58 +4749,30 @@ DO NOT:
         speak_math = self.speak_math_var.get()
         clean_text = clean_for_tts(text, speak_math=speak_math)
 
-        # Rest of your existing code continues...
         import time
+        import tempfile
         engine = self.tts_engine.get()
 
-        # Enhanced file locking protection
-        tmp = out_wav + ".tmp.wav"
-        max_retries = 3
-        retry_delay = 0.5
+        # FIXED: Enhanced file locking protection with proper temp file handling
+        out_dir = os.path.dirname(out_wav) or "out"
+        os.makedirs(out_dir, exist_ok=True)
 
-        for attempt in range(max_retries):
-            try:  # OUTER try block
-                # Clean up any existing temp files
-                if os.path.exists(tmp):
-                    try:  # INNER try block
-                        os.remove(tmp)
-                    except Exception:  # Closes INNER try
-                        pass
+        # Use tempfile in the same directory to avoid cross-device issues
+        temp_fd, temp_path = tempfile.mkstemp(suffix='.wav', prefix='tts_', dir=out_dir)
+        os.close(temp_fd)  # Close the file descriptor, we'll use the path
 
-                # Ensure output directory exists
-                os.makedirs(os.path.dirname(out_wav), exist_ok=True)
-
-                # === REST OF YOUR VOICE SELECTION CODE GOES HERE ===
-
-            except Exception as e:  # ← ADD THIS TO CLOSE THE OUTER try
-                self.logln(f"[tts] attempt {attempt + 1} setup failed: {e}")
-                if attempt < max_retries - 1:
-                    time.sleep(retry_delay)
-                continue
-
-        # Use the toggle setting
-        speak_math = self.speak_math_var.get()
-        clean_text = clean_for_tts(text, speak_math=speak_math)
-
-        import time
-        engine = self.tts_engine.get()
-
-        # Enhanced file locking protection
-        tmp = out_wav + ".tmp.wav"
         max_retries = 3
         retry_delay = 0.5
 
         for attempt in range(max_retries):
             try:
                 # Clean up any existing temp files
-                if os.path.exists(tmp):
+                if os.path.exists(temp_path):
                     try:
-                        os.remove(tmp)
-                    except Exception:
-                        pass
-
-                # Ensure output directory exists
-                os.makedirs(os.path.dirname(out_wav), exist_ok=True)
+                        os.remove(temp_path)
+                    except Exception as e:
+                        self.logln(f"[tts] Warning: Could not remove temp file {temp_path}: {e}")
+                        # Continue anyway, tempfile should be unique
 
                 # Vision always uses the FIRST SAPI5 voice
                 if role == "vision":
@@ -4814,24 +4785,42 @@ DO NOT:
                     # === Speech TTS Speed ===
                     eng.setProperty("rate", 150 + self.speech_rate_var.get() * 10)
 
-                    eng.save_to_file(clean_text, tmp)
+                    eng.save_to_file(clean_text, temp_path)
                     eng.runAndWait()
                     eng.stop()
 
-                    # Wait for file to be written
-                    time.sleep(0.2)
+                    # Wait for file to be written with timeout
+                    wait_time = 0
+                    while not os.path.exists(temp_path) and wait_time < 5.0:
+                        time.sleep(0.1)
+                        wait_time += 0.1
 
-                    if os.path.exists(tmp) and os.path.getsize(tmp) > 0:
+                    if os.path.exists(temp_path) and os.path.getsize(temp_path) > 1024:  # At least 1KB
+                        # Safely replace the output file
                         if os.path.exists(out_wav):
                             try:
                                 os.remove(out_wav)
-                            except Exception:
-                                pass
-                        os.rename(tmp, out_wav)
-                        self.logln(f"[tts] vision (sapi5, fixed): {voice_id}")
-                        return True
+                            except Exception as e:
+                                self.logln(f"[tts] Warning: Could not remove existing output {out_wav}: {e}")
+                                # Try to continue anyway
+
+                        try:
+                            os.rename(temp_path, out_wav)
+                            self.logln(f"[tts] vision (sapi5, fixed): {voice_id}")
+                            return True
+                        except Exception as e:
+                            self.logln(f"[tts] Error renaming temp file: {e}")
+                            # Fallback: copy instead of rename
+                            try:
+                                import shutil
+                                shutil.copy2(temp_path, out_wav)
+                                self.logln(f"[tts] vision (sapi5, fixed) - copied: {voice_id}")
+                                return True
+                            except Exception as e2:
+                                self.logln(f"[tts] Error copying temp file: {e2}")
                     else:
-                        self.logln("[tts] temp file not created properly")
+                        self.logln(
+                            f"[tts] temp file not created properly: exists={os.path.exists(temp_path)}, size={os.path.getsize(temp_path) if os.path.exists(temp_path) else 0}")
                         continue
 
                 # Text keeps current selection
@@ -4846,30 +4835,47 @@ DO NOT:
                     else:
                         voice_id = selected_display.split(" | ")[0] if " | " in selected_display else selected_display
 
-
                     eng = pyttsx3.init()
                     eng.setProperty("voice", voice_id)
                     # === TTS Speed  ===
                     eng.setProperty("rate", 150 + self.speech_rate_var.get() * 10)
 
-                    eng.save_to_file(clean_text, tmp)
+                    eng.save_to_file(clean_text, temp_path)
                     eng.runAndWait()
                     eng.stop()
 
-                    # Wait for file to be written
-                    time.sleep(0.2)
+                    # Wait for file to be written with timeout
+                    wait_time = 0
+                    while not os.path.exists(temp_path) and wait_time < 5.0:
+                        time.sleep(0.1)
+                        wait_time += 0.1
 
-                    if os.path.exists(tmp) and os.path.getsize(tmp) > 0:
+                    if os.path.exists(temp_path) and os.path.getsize(temp_path) > 1024:  # At least 1KB
+                        # Safely replace the output file
                         if os.path.exists(out_wav):
                             try:
                                 os.remove(out_wav)
-                            except Exception:
-                                pass
-                        os.rename(tmp, out_wav)
-                        self.logln(f"[tts] text (sapi5): {voice_id}")
-                        return True
+                            except Exception as e:
+                                self.logln(f"[tts] Warning: Could not remove existing output {out_wav}: {e}")
+                                # Try to continue anyway
+
+                        try:
+                            os.rename(temp_path, out_wav)
+                            self.logln(f"[tts] text (sapi5): {voice_id}")
+                            return True
+                        except Exception as e:
+                            self.logln(f"[tts] Error renaming temp file: {e}")
+                            # Fallback: copy instead of rename
+                            try:
+                                import shutil
+                                shutil.copy2(temp_path, out_wav)
+                                self.logln(f"[tts] text (sapi5) - copied: {voice_id}")
+                                return True
+                            except Exception as e2:
+                                self.logln(f"[tts] Error copying temp file: {e2}")
                     else:
-                        self.logln("[tts] temp file not created properly")
+                        self.logln(
+                            f"[tts] temp file not created properly: exists={os.path.exists(temp_path)}, size={os.path.getsize(temp_path) if os.path.exists(temp_path) else 0}")
                         continue
 
             except Exception as e:
@@ -4880,14 +4886,22 @@ DO NOT:
                     self.logln(f"[tts] all {max_retries} attempts failed")
                     # Final cleanup
                     try:
-                        if os.path.exists(tmp):
-                            os.remove(tmp)
+                        if os.path.exists(temp_path):
+                            os.remove(temp_path)
                     except Exception:
                         pass
                     return False
 
+        # Final cleanup if we exit the loop without success
+        try:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        except Exception:
+            pass
+
         return False
 
+    
     def set_speech_rate(self, rate: int):
         """Set speech rate to specific value"""
         self.speech_rate_var.set(rate)
