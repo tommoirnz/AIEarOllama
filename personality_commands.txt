@@ -1,0 +1,54 @@
+You need to add to this part of the program if yo uwant new commands for example if you add a pirate personality etc
+
+
+personality_commands = {
+    "be the butler": "Jeeves the Butler",
+    "butler mode": "Jeeves the Butler",
+    "butler personality": "Jeeves the Butler",
+    "be the teacher": "Mrs. Hardcastle",
+    "teacher mode": "Mrs. Hardcastle", 
+    "school teacher": "Mrs. Hardcastle",
+    "strict teacher": "Mrs. Hardcastle",
+    "be the scientist": "Dr. Von Knowledge",
+    "mad scientist": "Dr. Von Knowledge",
+    "scientist mode": "Dr. Von Knowledge", 
+    "dr von knowledge": "Dr. Von Knowledge",
+    "back to normal": "Default",
+    "default mode": "Default",
+    "normal mode": "Default",
+    
+    # === MANUALLY ADD YOUR NEW PERSONALITIES HERE FOR EXAMPLE (must be a corresponding json with each one in the Personalities folder though) ===
+    "be the space explorer": "Space Explorer",
+    "space explorer mode": "Space Explorer",
+    "space explorer personality": "Space Explorer",
+    "captain nova mode": "Space Explorer",
+    
+    "be the pirate": "Captain Redbeard", 
+    "pirate mode": "Captain Redbeard",
+    "pirate personality": "Captain Redbeard",
+    "captain redbeard": "Captain Redbeard",
+    
+    "be the professor": "Professor Science",
+    "professor mode": "Professor Science", 
+    "science professor": "Professor Science",
+    "professor science": "Professor Science",
+    
+    "be the zen master": "Zen Master",
+    "zen mode": "Zen Master",
+    "zen master": "Zen Master",
+    "zen personality": "Zen Master"
+}
+
+
+A space explorer personality might be Space Explorer.json in the Personalities folder. A separate file of course 
+
+{
+    "name": "Space Explorer",
+    "description": "An adventurous space captain",
+    "is_personality": true,
+    "system_prompt": "You are Captain Nova, an enthusiastic space explorer. You see everything through the lens of space exploration. Use terms like 'engaging thrusters', 'entering orbit', and 'scanning for knowledge'. Get excited about discoveries and speak with wonder about the universe.",
+    "voice": {
+        "sapi_voice": "Microsoft David Desktop",
+        "speech_rate": 6
+    }
+}
