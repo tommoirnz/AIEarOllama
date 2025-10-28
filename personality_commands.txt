@@ -1,4 +1,5 @@
-You need to add to this part of the program if yo uwant new commands for example if you add a pirate personality etc
+You need to add to this part of the main program if you uwant new commands for example if you add a pirate personality etc
+It's in     def _route_command(self, raw_text: str)  and easy to find
 
 
 personality_commands = {
