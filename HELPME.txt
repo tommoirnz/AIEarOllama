@@ -1,0 +1,477 @@
+EarAIPersonalities.py
+
+==================================================
+
+EXECUTIVE SUMMARY
+Your system is configured for high-performance operation with:
+• Whisper Model: medium.en on CUDA
+• Qwen Model: qwen2.5:7b-instruct
+• Vision Model: qwen2.5vl:7b
+• Audio: 16000Hz → 44100Hz resampling
+• Text AI Voice: Microsoft David Desktop - English (United States)
+• Speech Rate: 5 (Fast)
+
+1. AUDIO SYSTEM CONFIGURATION
+• Input Sampling: 16000Hz - Optimized for Whisper
+• Output Sampling: 44100Hz - High quality playback
+• Buffer Size: 2048 samples - Low latency
+• Voice Activity Detection: 30ms frames, 2 aggressiveness
+• Utterance Limits: 600ms min, 15000ms max
+• Silence Detection: 800ms hang time
+
+2. SPEECH RECOGNITION (WHISPER)
+• Model: medium.en
+• Device: cuda - GPU accelerated
+• Precision: float16 - Optimized performance
+• Beam Size: 5 - Balanced accuracy/speed
+
+3. AI MODELS CONFIGURATION
+TEXT GENERATION (Qwen):
+• Model: qwen2.5:7b-instruct
+• Context: 4096 tokens
+• Temperature: 0.7 - Creative but focused
+• Max Tokens: 2000 - Detailed responses
+
+VISION PROCESSING:
+• Model: qwen2.5vl:7b
+• Context Duration: 300 seconds
+• Max Follow-ups: 3 turns
+
+4. TEXT-TO-SPEECH CONFIGURATION
+• PRIMARY VOICE: Microsoft David Desktop - English (United States)
+• SPEECH RATE: 5 (Fast)
+• Voice Characteristics: Male, Fast pace, Excellent for technical content
+
+5. ADVANCED FEATURES CONFIGURATION
+BARGE-IN INTERRUPTION:
+• Enabled: True
+• Threshold: 800 - Sensitive
+• Cooldown: 0.7 seconds
+• Minimum Utterance: 3 characters
+
+AUDIO DUCKING:
+• Enabled: True
+• Reduction: -12dB
+• Threshold: 600 - Very sensitive
+• Attack: 50ms (fast)
+• Release: 200ms (smooth)
+
+6. VOICE COMMAND REFERENCE
+SYSTEM CONTROL:
+• "sleep/go to sleep" - Mute microphone immediately
+• "wake/wake up" - Resume listening instantly
+• "stop/stop speaking" - Interrupt current response
+• "close window/close all windows" - Close secondary windows
+
+VISION & CAMERA:
+• "start camera/open camera" - Open camera window and start stream
+• "take a picture/take picture" - Capture current camera frame
+• "what do you see/what can you see" - Auto-capture and describe scene
+• "vision mode/image mode" - Activate vision AI mode
+• "explain/describe what is in the image" - Analyze current image
+
+SEARCH COMMANDS:
+• "search for [query]/look up [query]" - Perform web search
+• "information on [topic]" - Search with enhanced context
+
+AI MODE CONTROL:
+• "new topic/switch to text" - Return to text AI mode
+• "send/send to text" - Transfer vision info to text AI
+• "mute text/silence text" - Mute text AI audio
+• "unmute text/enable text audio" - Unmute text AI audio
+
+PERSONALITY COMMANDS:
+• "be the butler/butler mode" - Activate Jeeves the Butler personality
+• "be the scientist/mad scientist" - Activate Dr. Von Knowledge personality
+• "be the teacher/teacher mode" - Activate Mrs. Hardcastle personality
+• "back to normal/default mode" - Return to default personality
+
+7. PERFORMANCE OPTIMIZATION
+CURRENT PERFORMANCE PROFILE:
+✅ GPU accelerated speech recognition
+✅ High-quality audio resampling
+✅ Sensitive voice activation
+✅ Fast barge-in interruption
+✅ Clear mathematical rendering
+
+OPTIMIZATION RECOMMENDATIONS:
+FOR BETTER ACCURACY:
+• Increase whisper_beam_size to 7-10
+• Change whisper_model to 'large-v3'
+• Adjust vad_threshold to 0.015 if too sensitive
+
+FOR FASTER RESPONSE:
+• Set whisper_compute_type to 'int8'
+• Reduce frame_ms to 20
+• Lower max_utt_ms to 10000
+
+8. TROUBLESHOOTING
+COMMON ISSUES AND SOLUTIONS:
+• Voice activation too sensitive → Increase vad_threshold to 0.02
+• Barge-in triggers too easily → Increase bargein_threshold to 1200
+• Audio ducking too aggressive → Increase duck_thresh to 1000
+• Whisper using too much GPU memory → Change whisper_compute_type to 'int8'
+
+9. OPTIMAL USAGE PATTERNS
+YOUR SYSTEM IS IDEAL FOR:
+• Technical discussions and mathematical work
+• Quick information lookup and web searches
+• Image analysis and document reading
+• Fast-paced conversations with frequent interruptions
+
+RECOMMENDED WORKFLOW:
+
+Start with 'what do you see' for document analysis
+
+Use 'search for' for additional information
+
+Switch personalities with 'scientist mode' for technical work
+
+Use 'send to text' to combine vision and text analysis
+
+Interrupt frequently with 'stop' for fast-paced work
+
+10. CONFIGURATION MANAGEMENT
+QUICK SETTINGS TO TWEAK:
+• For quieter environments: vad_threshold = 0.005
+• For noisier environments: vad_threshold = 0.03
+• For more creative responses: qwen_temperature = 0.9
+• For more focused responses: qwen_temperature = 0.5
+• For slower, clearer speech: text_ai_speech_rate = 0
+• For faster speech: text_ai_speech_rate = 8
+
+=========================================
+
+📄 REPORT 1: COMPLETE CUSTOMIZED MANUAL
+CUSTOMIZED AI ASSISTANT OPERATION MANUAL
+Based on Your Specific Configuration
+==================================================
+
+EXECUTIVE SUMMARY
+Your system is configured for high-performance operation with:
+• Whisper Model: medium.en on CUDA
+• Qwen Model: qwen2.5:7b-instruct
+• Vision Model: qwen2.5vl:7b
+• Audio: 16000Hz → 44100Hz resampling
+• Text AI Voice: Microsoft David Desktop - English (United States)
+• Speech Rate: 5 (Fast)
+
+1. AUDIO SYSTEM CONFIGURATION
+• Input Sampling: 16000Hz - Optimized for Whisper
+• Output Sampling: 44100Hz - High quality playback
+• Buffer Size: 2048 samples - Low latency
+• Voice Activity Detection: 30ms frames, 2 aggressiveness
+• Utterance Limits: 600ms min, 15000ms max
+• Silence Detection: 800ms hang time
+
+2. SPEECH RECOGNITION (WHISPER)
+• Model: medium.en
+• Device: cuda - GPU accelerated
+• Precision: float16 - Optimized performance
+• Beam Size: 5 - Balanced accuracy/speed
+
+3. AI MODELS CONFIGURATION
+TEXT GENERATION (Qwen):
+• Model: qwen2.5:7b-instruct
+• Context: 4096 tokens
+• Temperature: 0.7 - Creative but focused
+• Max Tokens: 2000 - Detailed responses
+
+VISION PROCESSING:
+• Model: qwen2.5vl:7b
+• Context Duration: 300 seconds
+• Max Follow-ups: 3 turns
+
+4. TEXT-TO-SPEECH CONFIGURATION
+• PRIMARY VOICE: Microsoft David Desktop - English (United States)
+• SPEECH RATE: 5 (Fast)
+• Voice Characteristics: Male, Fast pace, Excellent for technical content
+
+5. ADVANCED FEATURES CONFIGURATION
+BARGE-IN INTERRUPTION:
+• Enabled: True
+• Threshold: 800 - Sensitive
+• Cooldown: 0.7 seconds
+• Minimum Utterance: 3 characters
+
+AUDIO DUCKING:
+• Enabled: True
+• Reduction: -12dB
+• Threshold: 600 - Very sensitive
+• Attack: 50ms (fast)
+• Release: 200ms (smooth)
+
+6. VOICE COMMAND REFERENCE
+
+SYSTEM CONTROL:
+• "sleep/go to sleep" - Mute microphone immediately
+• "wake/wake up" - Resume listening instantly
+• "stop/stop speaking" - Interrupt current response
+• "close window/close all windows" - Close secondary windows
+
+VISION & CAMERA:
+• "start camera/open camera" - Open camera window and start stream
+• "take a picture/take picture" - Capture current camera frame
+• "what do you see/what can you see" - Auto-capture and describe scene
+• "vision mode/image mode" - Activate vision AI mode
+• "explain/describe what is in the image" - Analyze current image
+
+SEARCH COMMANDS:
+• "search for [query]/look up [query]" - Perform web search
+• "information on [topic]" - Search with enhanced context
+
+AI MODE CONTROL:
+• "new topic/switch to text" - Return to text AI mode
+• "send/send to text" - Transfer vision info to text AI
+• "mute text/silence text" - Mute text AI audio
+• "unmute text/enable text audio" - Unmute text AI audio
+
+PERSONALITY COMMANDS:
+• "be the butler/butler mode" - Activate Jeeves the Butler personality
+• "be the scientist/mad scientist" - Activate Dr. Von Knowledge personality
+• "be the teacher/teacher mode" - Activate Mrs. Hardcastle personality
+• "back to normal/default mode" - Return to default personality
+
+7. PERFORMANCE OPTIMIZATION
+
+CURRENT PERFORMANCE PROFILE:
+✅ GPU accelerated speech recognition
+✅ High-quality audio resampling
+✅ Sensitive voice activation
+✅ Fast barge-in interruption
+✅ Clear mathematical rendering
+
+OPTIMIZATION RECOMMENDATIONS:
+FOR BETTER ACCURACY:
+• Increase whisper_beam_size to 7-10
+• Change whisper_model to 'large-v3'
+• Adjust vad_threshold to 0.015 if too sensitive
+
+FOR FASTER RESPONSE:
+• Set whisper_compute_type to 'int8'
+• Reduce frame_ms to 20
+• Lower max_utt_ms to 10000
+
+8. TROUBLESHOOTING
+
+COMMON ISSUES AND SOLUTIONS:
+• Voice activation too sensitive → Increase vad_threshold to 0.02
+• Barge-in triggers too easily → Increase bargein_threshold to 1200
+• Audio ducking too aggressive → Increase duck_thresh to 1000
+• Whisper using too much GPU memory → Change whisper_compute_type to 'int8'
+
+9. OPTIMAL USAGE PATTERNS
+
+YOUR SYSTEM IS IDEAL FOR:
+• Technical discussions and mathematical work
+• Quick information lookup and web searches
+• Image analysis and document reading
+• Fast-paced conversations with frequent interruptions
+
+RECOMMENDED WORKFLOW:
+
+Start with 'what do you see' for document analysis
+
+Use 'search for' for additional information
+
+Switch personalities with 'scientist mode' for technical work
+
+Use 'send to text' to combine vision and text analysis
+
+Interrupt frequently with 'stop' for fast-paced work
+
+10. CONFIGURATION MANAGEMENT
+
+QUICK SETTINGS TO TWEAK:
+• For quieter environments: vad_threshold = 0.005
+• For noisier environments: vad_threshold = 0.03
+• For more creative responses: qwen_temperature = 0.9
+• For more focused responses: qwen_temperature = 0.5
+• For slower, clearer speech: text_ai_speech_rate = 0
+• For faster speech: text_ai_speech_rate = 8
+
+📄 REPORT 2: CONFIGURATION QUICK REFERENCE
+QUICK CONFIGURATION REFERENCE
+==================================================
+
+PERFORMANCE SETTINGS:
+Whisper: medium.en on cuda
+Precision: float16
+Beam Size: 5
+
+VOICE SETTINGS:
+Text AI Voice: Microsoft David Desktop - English (United States)
+Speech Rate: 5 (0=slow, 10=fast)
+
+SENSITIVITY SETTINGS:
+VAD Threshold: 0.01 (lower = more sensitive)
+Barge-in Threshold: 800 (lower = easier interrupt)
+Ducking Threshold: 600 (lower = more aggressive)
+
+RESPONSE SETTINGS:
+Qwen Temperature: 0.7 (0.1-1.0)
+Max Response Length: 2000 tokens
+Vision Follow-ups: 3 turns
+
+QUICK TWEAKS:
+More sensitive: vad_threshold = 0.005
+Less sensitive: vad_threshold = 0.03
+More creative: qwen_temperature = 0.9
+More focused: qwen_temperature = 0.4
+
+AUDIO SETTINGS:
+Input: 16000Hz
+Output: 44100Hz
+Buffer: 2048 samples
+Latency: High
+
+VISION SETTINGS:
+Model: qwen2.5vl:7b
+Context: 300 seconds
+Max Turns: 3
+
+📄 REPORT 3: VOICE COMMAND CHEAT SHEET
+VOICE COMMAND CHEAT SHEET - OPTIMIZED FOR YOUR SETUP
+============================================================
+
+QUICK START - ESSENTIAL COMMANDS:
+┌───────────────────────┬─────────────────────────────────┐
+│ Command │ What Happens │
+├───────────────────────┼─────────────────────────────────┤
+│ "sleep" │ Mute mic (instant) │
+│ "wake up" │ Resume listening (instant) │
+│ "stop" │ Interrupt speech (very fast) │
+│ "what do you see" │ Camera + describe (5 sec) │
+│ "search for cats" │ Web search with summaries │
+│ "send that" │ Vision → Text AI transfer │
+└───────────────────────┴─────────────────────────────────┘
+
+VISION & CAMERA COMMANDS:
+┌───────────────────────┬─────────────────────────────────┐
+│ "start camera" │ Open camera window │
+│ "take a picture" │ Snap and save image │
+│ what do you see" │ Analyze current image │
+│ "vision mode" │ Switch to vision AI │
+│ "text mode" │ Return to text AI │
+└───────────────────────┴─────────────────────────────────┘
+
+SEARCH & INFORMATION:
+┌───────────────────────┬─────────────────────────────────┐
+│ "search for AI news" │ Latest AI developments │
+│ "look up python" │ Programming information │
+│ "information on" │ Comprehensive search │
+│ "web search for" │ Explicit web search │
+└───────────────────────┴─────────────────────────────────┘
+
+PERSONALITY SWITCHING:
+┌───────────────────────┬─────────────────────────────────┐
+│ "butler mode" │ Jeeves - formal & helpful │
+│ "scientist mode" │ Dr. Von Knowledge - technical │
+│ "teacher mode" │ Mrs. Hardcastle - educational │
+│ "back to normal" │ Default personality │
+└───────────────────────┴─────────────────────────────────┘
+
+AUDIO CONTROL:
+┌───────────────────────┬─────────────────────────────────┐
+│ "mute text" │ Silence text AI (David) │
+│ "unmute text" │ Enable text AI voice │
+│ "mute vision" │ Silence vision AI │
+│ "unmute vision" │ Enable vision AI voice │
+└───────────────────────┴─────────────────────────────────┘
+
+PERFORMANCE TIPS FOR YOUR SETUP:
+• Speak clearly but naturally - system is very sensitive
+• Use short phrases for fastest response
+• Wait for green light before speaking
+• Interrupt long responses with 'stop'
+• Use 'what do you see' for document analysis
+• Combine vision + search for complex tasks
+
+
+beep.mp3                    # Listening prompt sound
+out/last_reply.wav          # Generated TTS output
+out/last_reply_echo.wav     # Echo-processed audio
+out/search_results.wav      # Search results audio
+out/search_status.wav       # Search status audio
+out/search_results_echo.wav # Echo search results
+
+Personalities/Jeeves the Butler.json
+Personalities/Mrs. Hardcastle.json  
+Personalities/Dr. Von Knowledge.json
+Personalities/[Any custom personality].json
+
+out/                        # Main output folder
+├── last_reply.wav
+├── last_reply_echo.wav
+├── search_results.wav
+├── search_status.wav
+├── search_results_echo.wav
+├── snapshot_20241224_143022.png  # Camera snapshots
+├── live_frame.png          # Temporary camera frame
+└── tmp_frame.png          # Temporary processing
+
+config.json                 # Main configuration (REQUIRED)
+config.example.json        # Example config (optional backup)
+.env                       # Environment variables (Brave API key)
+
+
+Avatars.py                  # Avatar window classes
+audio_io.py                 # Audio input/output handling
+asr_whisper.py              # Whisper speech recognition
+qwen_llmSearch2.py          # Qwen AI with search integration
+status_light_window.py      # External status light window
+Speak_Maths.py              # Math speech conversion
+
+🚨 CRITICAL FILES (MUST EXIST)
+These files are ESSENTIAL for basic operation:
+
+config.json - Main configuration
+
+Avatars.py - Avatar window classes
+
+audio_io.py - Audio handling
+
+asr_whisper.py - Speech recognition
+
+qwen_llmSearch2.py - AI engine
+
+These will be created automatically if missing:
+
+out/ directory and all WAV files
+
+Personalities/ directory
+
+🛠️ QUICK SETUP CHECKLIST
+Before First Run:
+
+config.json exists in root directory
+
+beep.mp3 exists (or accept fallback beeps)
+
+All Python modules are in same directory
+
+out/ directory is writable
+
+Webcam connected (for vision features)
+
+Microphone connected and working
+
+Ollama running on port 11434
+
+For Full Functionality:
+
+Personalities/ folder with JSON files
+
+.env file with BRAVE_KEY=your_key
+
+face.png for FaceRadialAvatar
+
+Stable internet connection for web search
+
+
+
+
+
+
+
+
