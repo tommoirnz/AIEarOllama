@@ -16,7 +16,7 @@ warnings.filterwarnings("ignore", message=".*overflow encountered.*")
 import numpy as np
 # ... your existing imports ...
 
-from Avatars import CircleAvatarWindow, RectAvatarWindow, RectAvatarWindow2, RadialPulseAvatar,FaceRadialAvatar
+from Avatars import CircleAvatarWindow, RectAvatarWindow, RectAvatarWindow2, RadialPulseAvatar, FaceRadialAvatar
 
 # ... rest of your imports ...
 np.seterr(over='ignore', under='ignore', invalid='ignore')
@@ -35,11 +35,8 @@ from PIL import Image, ImageTk
 import matplotlib
 from status_light_window import StatusLightWindow  # Adjust the filename if needed
 
-# Multiple personalities can be used here. Json files stored in sub directory Personalities
-# For example you can say 'Be the Butler' or 'Be the Teacher', 'Be the Scientist' or 'normal mode'
-# You will need the SAPI5 voices otehrwise you can alter these in the Json files under the personalities folder
 # This uses two models and a different Json file and handles images as well
-# Look for the Json file  called Json2. You will need two AI models as per the Json file loaded into ollama
+# Look for the Json file  called Json2. You will need two models as per the Json file loaded into ollama
 # can read equations off paper and handwriting. Uses qwen_llmSearch2.py
 # Can use 'Sleep' and 'Awaken' to mute the microphone but text can still be used. There is also a switch to stop speech.
 # So you can run entirely in text mode if you so choose.
@@ -47,7 +44,6 @@ from status_light_window import StatusLightWindow  # Adjust the filename if need
 # It's free for a fair number of searches but after that you need to pay
 # Put that key in the file .env or the program won't work
 # Try asking it "what is the latest news in New Zealand and it will find that enws and summarise it.
-# Boot up Ollama separately with coldstart.py
 # Warning, Ai models make mistakes so check and answers
 # Tom Moir Oct 2025
 matplotlib.rcParams["figure.max_open_warning"] = 0
@@ -174,6 +170,71 @@ def clean_for_tts(text: str, speak_math: bool = True) -> str:
     cleaned_text = re.sub(r"\s{2,}", " ", cleaned_text)
 
     return cleaned_text.strip()
+
+# Add another cleaning method for odd output from Deepseek
+def clean_model_output(text: str) -> str:
+    """
+    Clean model-specific formatting artifacts from AI responses.
+    """
+    if not text:
+        return ""
+
+    cleaned = text
+
+    print(f"🔧 [CLEANER] Input: {repr(text[:100])}")
+
+    # Remove ALL variants of DeepSeek tokens:
+    # <|im_end|>
+    # <|im_end>|<think>
+    # <|im_start|>
+    # Any other <|...|> patterns
+
+    # Method 1: Remove everything after any end token pattern
+    end_patterns = [
+        '<|im_end|>',
+        '<|im_end>|<think>',
+        '<|end|>',
+        '<|endoftext|>'
+    ]
+
+    for pattern in end_patterns:
+        if pattern in cleaned:
+            parts = cleaned.split(pattern)
+            cleaned = parts[0].strip()
+            print(f"🔧 [CLEANER] Split by pattern: {pattern}")
+            break  # Stop after first match
+
+    # Method 2: Remove any remaining individual tokens
+    tokens_to_remove = [
+        '<|im_start|>', '<|im_end|>', '<|end|>', '<|endoftext|>',
+        '<|im_end>|<think>', '<|think|>', '<|system|>', '<|user|>', '<|assistant|>'
+    ]
+
+    for token in tokens_to_remove:
+        cleaned = cleaned.replace(token, '')
+
+    # Method 3: Aggressive regex for any <|...|> or <|...> patterns
+    import re
+    cleaned = re.sub(r'<\|[^>]*(?:\|>|>)', '', cleaned)
+
+    # Method 4: Remove LaTeX document wrappers
+    if '\\documentclass' in cleaned:
+        if '\\begin{document}' in cleaned:
+            parts = cleaned.split('\\begin{document}')
+            if len(parts) > 1:
+                cleaned = parts[1].strip()
+        if '\\end{document}' in cleaned:
+            cleaned = cleaned.split('\\end{document}')[0].strip()
+
+    # Final cleanup
+    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+    cleaned = cleaned.strip()
+
+    print(f"🔧 [CLEANER] Output: {repr(cleaned[:100])}")
+    print(f"🔧 [CLEANER] Success: {not any(token in cleaned for token in tokens_to_remove)}")
+
+    return cleaned
+
 
 
 def purge_temp_images(folder="out"):
@@ -352,7 +413,6 @@ class LatexWindow(tk.Toplevel):
         except Exception as e:
             self._log(f"[latex] copy raw failed: {e}")
 
-
     def show(self):
         """Show the window"""
         self.deiconify()
@@ -512,7 +572,6 @@ class LatexWindow(tk.Toplevel):
             self._menu.tk_popup(event.x_root, event.y_root)
         finally:
             self._menu.grab_release()
-
 
     # ==================== LATEX RENDERING METHODS ====================
 
@@ -1015,10 +1074,6 @@ class WebSearchWindow(tk.Toplevel):
         except Exception as e:
             self._log(f"[latex] copy raw failed: {e}")
 
-
-
-
-
     def preview_latex(self, content: str, context="text"):
         """Preview LaTeX content with append/replace option"""
         if not self.latex_auto.get():
@@ -1168,7 +1223,6 @@ class WebSearchWindow(tk.Toplevel):
         if hasattr(self.master, 'start_search_progress_indicator'):
             self.master.start_search_progress_indicator()
 
-
         try:
             results = self.brave_search(query, 6)
             self.queue.put(("searched", len(results)))
@@ -1218,7 +1272,6 @@ class WebSearchWindow(tk.Toplevel):
         # === STOP ON ERROR ===
         if hasattr(self.master, 'stop_search_progress_indicator'):
             self.master.stop_search_progress_indicator()
-
 
     def _create_final_summary(self) -> str:
         """Create a consolidated summary of all search results"""
@@ -1329,7 +1382,6 @@ class WebSearchWindow(tk.Toplevel):
         # ===  STOP ON GENERAL ERROR ===
         if hasattr(self.master, 'stop_search_progress_indicator'):
             self.master.stop_search_progress_indicator()
-
 
         if self.winfo_exists():
             self.after(120, self._poll_queue)
@@ -1468,13 +1520,13 @@ class WebSearchWindow(tk.Toplevel):
 #
 
 # === Main App Class ===
+# === Main App Class ===
 class App:
     def __init__(self, master):
         self.avatar_win = None
         self.cfg = load_cfg()
 
         # === Initialize logln method FIRST ===
-
         def logln(msg):
             def _append():
                 try:
@@ -1509,7 +1561,6 @@ class App:
                 or "qwen2.5-vl:7b"
         )
 
-
         # === ADD SLEEP VARIABLES RIGHT HERE ===
         self.sleep_mode = False
         self.sleep_commands = ["sleep", "go to sleep", "rest mode", "silence", "stop listening"]
@@ -1519,9 +1570,12 @@ class App:
         master.title("Always Listening — Qwen (local)")
         master.geometry("1080x600")
 
-        # Ensure output dir exists
-        os.makedirs("out", exist_ok=True)
-        purge_temp_images("out")
+        # === ADD MODEL SELECTION VARIABLES RIGHT HERE ===
+        # === ADD MODEL SELECTION VARIABLES RIGHT HERE ===
+        # === FIXED MODEL SELECTION VARIABLES ===
+        self.text_model_var = tk.StringVar()
+        self.vision_model_var = tk.StringVar()
+
         # === INITIALIZE ALL TKINTER VARIABLES HERE ===
         self.tts_engine = tk.StringVar(value="sapi5")
         self.speech_rate_var = tk.IntVar(value=0)
@@ -1620,6 +1674,10 @@ class App:
         # Apply config defaults
         self._apply_config_defaults()
 
+        # Auto-refresh models after UI is ready
+        self.master.after(1500, self._refresh_models)  # 1.5 second delay
+
+
     def _setup_ui(self):
         from tkinter import ttk
 
@@ -1645,7 +1703,6 @@ class App:
         self.external_light_btn = ttk.Button(top, text="External Light", command=self.toggle_external_light)
         self.external_light_btn.grid(row=2, column=5, padx=6)  # Adjust column as needed
 
-
         # STOP SPEAKING button
         self.stop_speech_btn = ttk.Button(top, text="Stop Speaking", command=self.stop_speaking)
         self.stop_speech_btn.grid(row=0, column=3, padx=6)
@@ -1660,6 +1717,39 @@ class App:
         # Close Windows button -
         ttk.Button(top, text="Close Windows", command=self.close_all_windows).grid(row=2, column=9, padx=6)
 
+        #==== Setup Load Models =======
+        model_frame = ttk.Frame(top)
+        model_frame.grid(row=2, column=11, padx=6, sticky="n")
+
+        # Text AI Model
+        ttk.Label(model_frame, text="Text AI Model").pack(anchor="n")
+        self.text_model_combo = ttk.Combobox(
+            model_frame,
+            textvariable=self.text_model_var,
+            state="readonly",
+            width=18
+        )
+        self.text_model_combo.pack(pady=(2, 2), anchor="n")
+        # DON'T set default here - let refresh handle it
+
+        # Vision AI Model
+        ttk.Label(model_frame, text="Vision AI Model").pack(anchor="n")
+        self.vision_model_combo = ttk.Combobox(
+            model_frame,
+            textvariable=self.vision_model_var,
+            state="readonly",
+            width=18
+        )
+        self.vision_model_combo.pack(pady=(2, 4), anchor="n")
+        # DON'T set default here - let refresh handle it
+
+
+
+        ttk.Button(model_frame, text="Refresh Models", command=self._refresh_models, width=15).pack(anchor="n")
+
+        # Bind model changes
+        self.text_model_combo.bind("<<ComboboxSelected>>", lambda e: self._on_model_change())
+        self.vision_model_combo.bind("<<ComboboxSelected>>", lambda e: self._on_model_change())
         # Button container
         mute_buttons_frame = ttk.Frame(mute_frame)
         mute_buttons_frame.pack(fill="x", pady=(2, 0))
@@ -1747,7 +1837,7 @@ class App:
         ttk.Label(_avatar_bar, text="Avatar").pack(anchor="n")
         self.avatar_combo = ttk.Combobox(
             _avatar_bar, textvariable=self.avatar_kind, state="readonly",
-            width=14, values=["Rings", "Rectangles", "Rectangles 2", "Radial Pulse","FaceRadialAvatar"]
+            width=14, values=["Rings", "Rectangles", "Rectangles 2", "Radial Pulse", "FaceRadialAvatar"]
 
         )
         self.avatar_combo.current(0)
@@ -1869,8 +1959,6 @@ class App:
         )
         self.sapi_combo.grid(row=5, column=1, columnspan=5, sticky="w", padx=6, pady=4)
 
-
-
         # Set default selection
         if voices_display and voices_display[0] != "(no SAPI5 voices - install pyttsx3)":
             self.sapi_combo.current(0)
@@ -1912,8 +2000,6 @@ class App:
 
         # Initialize the display for fast speed
         self.update_rate_display()
-
-
 
         # Preset buttons
         preset_frame = ttk.Frame(self.master)
@@ -1958,7 +2044,6 @@ class App:
         DEFAULT_MATH_PT = int(self.cfg.get("latex_math_pt", 8))
         DEFAULT_TEXT_FAMILY = self.cfg.get("latex_text_family", "Segoe UI")
 
-
         self.latex_win_text = LatexWindow(
             self.master,
             log_fn=self.logln,
@@ -1998,9 +2083,9 @@ class App:
             config_voice = None
             self.logln(f"[tts] voice enumeration error: {e}")
 
-       # ttk.Label(self.master, text="SAPI Voice:").grid(row=5, column=0, sticky="e")
-      #  self.sapi_combo = ttk.Combobox(self.master, textvariable=self.sapi_voice_var,
-                                #       values=voices, width=18)
+        # ttk.Label(self.master, text="SAPI Voice:").grid(row=5, column=0, sticky="e")
+        #  self.sapi_combo = ttk.Combobox(self.master, textvariable=self.sapi_voice_var,
+        #       values=voices, width=18)
 
         # Set combobox to JSON config voice if available
         if config_voice and config_voice in voices:
@@ -2011,9 +2096,36 @@ class App:
             if config_voice:
                 self.logln(f"[tts] Config voice '{config_voice}' not found, using first available")
 
-
     def _setup_ai_engines(self):
-        """Initialize AI engines after UI is set up"""
+        """Initialize AI engines with selected models"""
+
+        # Ensure we have model selections
+        if not self.text_model_var.get() or not self.vision_model_var.get():
+            self.logln("[ai] ❌ No model selections found - refreshing models")
+            self._refresh_models()
+            if not self.text_model_var.get() or not self.vision_model_var.get():
+                self.logln("[ai] ❌ Still no model selections - using defaults from config")
+                self.text_model_var.set(self.cfg["qwen_model_path"])
+                self.vision_model_var.set(self.cfg.get("vl_model") or "qwen2.5-vl:7b")
+
+        # ALWAYS use whatever is selected in the combo boxes
+        text_model = self.text_model_var.get()
+        vision_model = self.vision_model_var.get()
+
+        print(f"[DEBUG] _setup_ai_engines - Using Text: '{text_model}'")
+        print(f"[DEBUG] _setup_ai_engines - Using Vision: '{vision_model}'")# Update UI to show config value
+
+        self.logln(f"[ai] Initializing Text model: {text_model}")
+        self.logln(f"[ai] Initializing Vision model: {vision_model}")
+
+        print(f"[DEBUG] _setup_ai_engines - Using Text: '{text_model}'")
+        print(f"[DEBUG] _setup_ai_engines - Using Vision: '{vision_model}'")
+        # Check if models changed
+        if hasattr(self, 'qwen') and self.qwen:
+            current_text_model = getattr(self.qwen, 'model_path', 'unknown')
+            if current_text_model != text_model:
+                print(f"[DEBUG] Text model changed from '{current_text_model}' to '{text_model}'")
+        # Initialize ASR (unchanged)
         self.asr = ASR(
             self.cfg["whisper_model"],
             self.cfg["whisper_device"],
@@ -2021,14 +2133,18 @@ class App:
             self.cfg["whisper_beam_size"]
         )
 
-        import importlib, inspect, sys
+        # Initialize Qwen with selected model
         self.qwen = QwenLLM(
-            model_path=self.cfg["qwen_model_path"],
-            model=self.cfg["qwen_model_path"],
+            model_path=text_model,  # Use selected model
+            model=text_model,
             temperature=self.cfg["qwen_temperature"],
             max_tokens=self.cfg["qwen_max_tokens"]
         )
-        # ===  CRITICAL CONNECTION LINES ===
+
+        # Update vision model
+        self.vl_model = vision_model
+
+        # === CRITICAL CONNECTION LINES ===
         # Connect main app to QwenLLM
         self.qwen.set_main_app(self)
         self.logln(
@@ -2058,64 +2174,63 @@ class App:
         current_day = current_datetime.strftime("%A")
 
         enhanced_system_prompt = f"""{sys_prompt}
-TTS SPEAKING GUIDELINES FOR MATHEMATICS:
-- When transitioning from regular text to equations, add a brief pause
-- After reading equations, add a slight pause before continuing with text
-- Speak mathematical expressions clearly and deliberately
-- For complex equations, break them into logical parts
-- Use phrases like "the equation shows..." or "mathematically speaking..." to introduce formulas
-- when reading a list of instructions or solutions that are numbered, put a pause between the number and the explanation.
-EXAMPLE: 
-1.We do this...  Put a pause after the 1. Make it sound like 1, ...
-2.Do that... put a pause after the 2
-3.Somethings else...put a pause after the 3
-Put pauses in such instances after the numbers.
+    TTS SPEAKING GUIDELINES FOR MATHEMATICS:
+    - When transitioning from regular text to equations, add a brief pause
+    - After reading equations, add a slight pause before continuing with text
+    - Speak mathematical expressions clearly and deliberately
+    - For complex equations, break them into logical parts
+    - Use phrases like "the equation shows..." or "mathematically speaking..." to introduce formulas
+    - when reading a list of instructions or solutions that are numbered, put a pause between the number and the explanation.
+    EXAMPLE: 
+    1.We do this...  Put a pause after the 1. Make it sound like 1, ...
+    2.Do that... put a pause after the 2
+    3.Somethings else...put a pause after the 3
+    Put pauses in such instances after the numbers.
 
-ANOTHER EXAMPLE:
-Instead of: "The solution is x=5 and then we continue"
-Use: "The solution is... x equals five... and then we continue"
+    ANOTHER EXAMPLE:
+    Instead of: "The solution is x=5 and then we continue"
+    Use: "The solution is... x equals five... and then we continue"
 
-Instead of: "We have f(x)=x²+2x+1 which is a parabola"  
-Use: "We have the function... f of x equals x squared plus two x plus one... which describes a parabola"
+    Instead of: "We have f(x)=x²+2x+1 which is a parabola"  
+    Use: "We have the function... f of x equals x squared plus two x plus one... which describes a parabola"
 
-    BACKGROUND KNOWLEDGE: You have access to real-time information. The current date is {current_date} and the time is {current_time}.
-CURRENT REAL DATE: {current_day}, {current_date} at {current_time}
-*** USE THIS EXACT DATE - DO NOT CALCULATE OR GUESS ***
+        BACKGROUND KNOWLEDGE: You have access to real-time information. The current date is {current_date} and the time is {current_time}.
+    CURRENT REAL DATE: {current_day}, {current_date} at {current_time}
+    *** USE THIS EXACT DATE - DO NOT CALCULATE OR GUESS ***
 
-CRITICAL RULES:
-1. When asked about the date, ALWAYS use: "{current_day}, {current_date}"
-2. Never calculate days of the week from dates yourself
-3. If your internal knowledge conflicts with the date above, TRUST THE DATE PROVIDED
-4. October 22, 2025 is {current_day} - your training data may be incorrect for this specific date
+    CRITICAL RULES:
+    1. When asked about the date, ALWAYS use: "{current_day}, {current_date}"
+    2. Never calculate days of the week from dates yourself
+    3. If your internal knowledge conflicts with the date above, TRUST THE DATE PROVIDED
+    4. October 22, 2025 is {current_day} - your training data may be incorrect for this specific date
 
-
-
-USE THIS INFORMATION WHEN:
-- Specifically asked about date, time, or scheduling
-- Questions require current time context
-- Making time-sensitive calculations
-
-DO NOT:
-- Calculate or guess days of the week
-- Use your internal calendar knowledge for date questions
-- Second-guess the provided current date
     USE THIS INFORMATION WHEN:
     - Specifically asked about date, time, or scheduling
     - Questions require current time context
     - Making time-sensitive calculations
 
     DO NOT:
-    - Include date/time in every response unless specifically relevant
-    - Repeat "Today is [date]" in casual conversation
-    - Mention your access to real-time info unless asked
+    - Calculate or guess days of the week
+    - Use your internal calendar knowledge for date questions
+    - Second-guess the provided current date
+        USE THIS INFORMATION WHEN:
+        - Specifically asked about date, time, or scheduling
+        - Questions require current time context
+        - Making time-sensitive calculations
 
-    For casual conversation, respond naturally without unnecessary date/time mentions.
-    """
+        DO NOT:
+        - Include date/time in every response unless specifically relevant
+        - Repeat "Today is [date]" in casual conversation
+        - Mention your access to real-time info unless asked
+
+        For casual conversation, respond naturally without unnecessary date/time mentions.
+        """
 
         self.qwen.system_prompt = enhanced_system_prompt
         self.logln(f"[qwen] ✅ System prompt updated with balanced time awareness")
 
         self.logln(f"[qwen] 📅 Current date in system: {current_date} at {current_time}")
+
 
     def _apply_config_defaults(self):
         """Apply configuration defaults to UI"""
@@ -2176,7 +2291,6 @@ DO NOT:
         self._ui_last_ratio = 0.0
         self._ui_eased_ratio = 0.0
         self._ui_gamma = float(self.cfg.get("highlight_gamma", 1.12))
-
 
     def update_speak_math_setting(self):
         """Update the speak math setting - can be called when the checkbox changes"""
@@ -2307,7 +2421,7 @@ DO NOT:
             if use_vision:
                 self.logln(f"[vision] follow-up → reuse last image (turns left: {self._vision_turns_left})")
                 reply = self._ollama_generate_with_retry(text, images=[self._last_image_path])
-                # Only decrement AFTER successful generation
+                 # Only decrement AFTER successful generation
                 self._update_vision_state(used_turn=True)
                 self._last_was_vision = True
                 # PREVIEW VISION RESPONSE
@@ -2318,6 +2432,9 @@ DO NOT:
                     reply = self.qwen.generate_with_search(text)
                 else:
                     reply = self.qwen.generate(text)
+
+                # CLEAN TEXT RESPONSE
+                reply = clean_model_output(reply)  # ← ADD THIS LINE
 
                 # PREVIEW TEXT RESPONSE
                 self.preview_latex(reply, context="text")
@@ -2614,8 +2731,6 @@ DO NOT:
             # ===  STOP PROGRESS INDICATOR ON ERROR ===
             self.stop_search_progress_indicator()
             return f"Search failed: {str(e)}"
-
-
 
     def _process_ai_response(self, response: str, from_search_method: bool = False) -> str:
         """
@@ -2997,7 +3112,6 @@ DO NOT:
                     if utt is not None and utt.size > 0:
                         text = self.asr.transcribe(utt, self.cfg["sample_rate"])
 
-
                         # === ADD FILTER HERE ===
                         text = self.filter_whisper_hallucinations(text)
                         if not text:
@@ -3109,7 +3223,7 @@ DO NOT:
                     # normal text model path
                     # Use search-enhanced generation
                     reply = self.qwen.generate_with_search(text)
-
+                    reply = clean_model_output(reply)
                     # Only reset if we're definitely not in a vision context
                     if not self._should_use_vision_followup("dummy"):  # Check if context expired
                         self._update_vision_state(reset=True)
@@ -3612,7 +3726,6 @@ DO NOT:
         if not raw_text:
             return False
 
-
         import time as _t
 
         text = (raw_text or "").strip().lower()
@@ -3674,7 +3787,15 @@ DO NOT:
             "dr von knowledge": "Dr. Von Knowledge",
             "back to normal": "Default",
             "default mode": "Default",
-            "normal mode": "Default"
+            "normal mode": "Default",
+
+            "be the space explorer": "Space Explorer",
+            "space explorer mode": "Space Explorer",
+            "space explorer personality": "Space Explorer",
+            "captain nova mode": "Space Explorer",
+
+            "om shanti": "BK Yogi",
+            "aum shanti": "BK Yogi"
         }
         for command, personality in personality_commands.items():
             if command in text:
@@ -3690,8 +3811,7 @@ DO NOT:
                         else:
                             self.speak_search_status(f"Activating {personality} personality")
                     return True
-# ================================================================================
-
+        # ================================================================================
 
         # Mute Commands
         mute_commands = [
@@ -4014,8 +4134,6 @@ DO NOT:
         self.play_chime(freq=660, ms=120, vol=0.15)
         return windows_closed
 
-
-
     def enter_sleep_mode(self):
         """Enter sleep mode - ignore all voice input"""
         if not self.sleep_mode:
@@ -4044,6 +4162,99 @@ DO NOT:
                 self.master.title("Always Listening — Qwen (local)")
             except:
                 pass
+
+    def _refresh_models(self):
+        """Refresh available models from Ollama and set defaults from config"""
+        try:
+            models = self._get_available_models()
+
+            if models:
+                # Update combo boxes
+                self.text_model_combo['values'] = models
+                self.vision_model_combo['values'] = models
+
+                # Set defaults from config if not already set
+                if not self.text_model_var.get():
+                    default_text = self.cfg["qwen_model_path"]
+                    if default_text in models:
+                        self.text_model_var.set(default_text)
+                    elif models:  # Fallback to first available
+                        self.text_model_var.set(models[0])
+
+                if not self.vision_model_var.get():
+                    default_vision = self.cfg.get("vl_model") or "qwen2.5-vl:7b"
+                    if default_vision in models:
+                        self.vision_model_var.set(default_vision)
+                    elif models:  # Fallback to first available
+                        self.vision_model_var.set(models[0])
+
+                self.logln(f"[models] Loaded {len(models)} models")
+                self.logln(f"[models] Text: {self.text_model_var.get()}, Vision: {self.vision_model_var.get()}")
+            else:
+                self.logln("[models] No models found - is Ollama running?")
+
+        except Exception as e:
+            self.logln(f"[models] Error refreshing: {e}")
+
+    def _get_available_models(self):
+        """Get list of available Ollama models"""
+        try:
+            response = requests.get("http://localhost:11434/api/tags", timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            models = [model['name'] for model in data.get('models', [])]
+
+            # Debug output
+            print(f"[DEBUG] Found {len(models)} models: {models}")
+
+            return sorted(models)  # Sort for better UX
+
+        except Exception as e:
+            print(f"[DEBUG] Model fetch error: {e}")
+            self.logln(f"[models] Could not fetch models: {e}")
+            return []
+
+
+    def _on_model_change(self):
+        """Handle model selection changes - PROPERLY restart engines"""
+        text_model = self.text_model_var.get()
+        vision_model = self.vision_model_var.get()
+
+        if not text_model or not vision_model:
+            return
+
+        self.logln(f"[models] Model change requested - Text: '{text_model}', Vision: '{vision_model}'")
+
+        # Store the new selections in config
+        self.cfg["qwen_model_path"] = text_model
+        self.vl_model = vision_model
+
+        if self.running:
+            response = messagebox.askyesno(
+                "Model Change",
+                f"Changing models requires restarting the AI engine.\n\n"
+                f"New models:\n"
+                f"Text: {text_model}\n"
+                f"Vision: {vision_model}\n\n"
+                f"Stop and restart now?"
+            )
+            if response:
+                was_running = True
+                self.stop()
+                # Reinitialize with new models
+                self._setup_ai_engines()
+                self.start()  # Restart if it was running
+                self.logln(f"[models] ✅ Models changed and engines restarted")
+            else:
+                # Revert the combo boxes if user cancels
+                self._refresh_models()
+        else:
+            # If not running, just reinitialize
+            self._setup_ai_engines()
+            self.logln(f"[models] ✅ Models updated: Text={text_model}, Vision={vision_model}")
+
+
+
 
     def play_sleep_chime(self):
         """Play sleep confirmation chime"""
@@ -4112,12 +4323,12 @@ DO NOT:
             print(f"[wake-chime] {e}")
 
     def _ollama_generate(self, prompt: str, images=None):
-        """
-        Use Ollama REST directly when images are provided.
-        Falls back to self.qwen.generate for text-only.
-        """
+        """Use selected vision model"""
         if not images:
             return self.qwen.generate(prompt)
+
+        # Use the current selected vision model
+        current_vision_model = self.vision_model_var.get() or self.vl_model
 
         b64_images = []
         for it in images:
@@ -4136,7 +4347,7 @@ DO NOT:
         full_prompt = vision_prefix + (prompt or "")
 
         payload = {
-            "model": self.vl_model,
+            "model": current_vision_model,  # Use selected model
             "prompt": full_prompt,
             "images": b64_images,
             "system": self.vl_system_prompt,
@@ -4144,6 +4355,8 @@ DO NOT:
         }
 
         self.logln(f"[vision] model={payload['model']} images={len(b64_images)}")
+
+
         self.logln(f"[vision] sys[:120]={payload['system'][:120]!r}")
         self.logln(f"[vision] prm[:120]={payload['prompt'][:120]!r}")
 
@@ -4275,8 +4488,6 @@ DO NOT:
         # Store current mode for next comparison
         self._previous_light_mode = mode
 
-
-
     def toggle_external_light(self):
         """Toggle the external light window on/off"""
         try:
@@ -4308,15 +4519,35 @@ DO NOT:
         except Exception as e:
             self.logln(f"[light] toggle error: {e}")
 
+    # ==== AUDIBLE PROGRESS SOUND ===
+    def start(self):
+        if self.running: return
+        self.running = True
+        self.start_btn.config(state=tk.DISABLED)
+        self.stop_btn.config(state=tk.NORMAL)
+        self.set_light("idle")
 
-# ==== AUDIBLE PROGRESS SOUND ===
+        # === REMOVE auto-refresh ===
+        # Let the combo boxes keep whatever values they have
+
+        # ADD THIS LINE - sync echo state when starting
+        self._sync_echo_state()
+
+        threading.Thread(target=self.loop, daemon=True).start()
+
     def start_search_progress_indicator(self):
-        """Start periodic progress tones for ongoing searches"""
-        self._search_in_progress = True
-        self._search_progress_count = 0
-        self._last_search_progress_time = time.time()
-        self._play_search_progress_beep()
-        self._schedule_next_progress_beep()
+        """Start the search progress indicator"""
+        if not hasattr(self, '_search_in_progress'):
+            self._search_in_progress = False
+            self._search_progress_count = 0
+            self._search_progress_timer = None
+
+        if not self._search_in_progress:
+            self._search_in_progress = True
+            self._search_progress_count = 0
+            self._last_search_progress_time = time.time()
+            self._schedule_next_progress_beep()
+            self.logln("[search] 🔍 Starting search progress indicator")
 
     def stop_search_progress_indicator(self):
         """Stop the progress indicator when search completes"""
@@ -4330,7 +4561,6 @@ DO NOT:
             except:
                 pass
             self._search_progress_timer = None
-
 
     def set_external_light_color(self, color):
         """Set the color of the external light"""
@@ -4351,8 +4581,6 @@ DO NOT:
                 self.logln("[light] Status light closed")
         except Exception as e:
             self.logln(f"[light] close error: {e}")
-
-
 
     def _play_search_progress_beep(self):
         """Play a progress beep with variation based on search stage"""
@@ -4413,7 +4641,6 @@ DO NOT:
 
         except Exception as e:
             self.logln(f"[search] Progress beep error: {e}")
-
 
     def _schedule_next_progress_beep(self):
         """Schedule the next progress beep with variable timing"""
@@ -4736,9 +4963,6 @@ DO NOT:
         except Exception as e:
             self.logln(f"[avatar] Error opening avatar: {e}")
 
-
-
-
     def close_avatar(self):
         try:
             if self.avatar_win and self.avatar_win.winfo_exists():
@@ -5025,7 +5249,6 @@ DO NOT:
             pass
 
         return False
-
 
     def set_speech_rate(self, rate: int):
         """Set speech rate to specific value"""
@@ -5358,8 +5581,6 @@ DO NOT:
         if original_prompt:
             self.qwen.system_prompt = original_prompt
 
-
-
     # === SEARCH METHODS ===
 
     def brave_search(self, query: str, count: int = 6):
@@ -5423,8 +5644,6 @@ DO NOT:
         if t and (t.get("datetime") or (t.text and t.text.strip())):
             return t.get("datetime") or t.text.strip()
         return None
-
-
 
     def summarise_for_ai_search(self, text: str, url: str, pubdate: str):
         """Enhanced summarization that preserves practical information"""
@@ -5907,7 +6126,6 @@ DO NOT:
 
         tts_thread = threading.Thread(target=_tts_worker, daemon=True)
         tts_thread.start()
-
 
     # End syththesise_search
 
